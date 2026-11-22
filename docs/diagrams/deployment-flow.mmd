@@ -1,0 +1,9 @@
+flowchart LR
+    U[Research user] -->|HTTPS| L[Existing ALB]
+    L --> F[Streamlit on private EC2]
+    F --> A[FastAPI on Docker network]
+    A --> S[(Approved S3 packages)]
+    A --> P[(PostgreSQL)]
+    A --> G[Governance and MLflow]
+    F --> C[CloudWatch Logs]
+    A --> C

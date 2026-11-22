@@ -1,0 +1,9 @@
+flowchart LR
+    UI[Streamlit] --> API[FastAPI]
+    API --> R[Registry]
+    R --> ML[MLflow]
+    R --> G[Governance]
+    API --> M[Model runtime]
+    M --> S[Artifact store]
+    API --> P[Input and output adapters]
+    API --> D[(Prediction metadata)]

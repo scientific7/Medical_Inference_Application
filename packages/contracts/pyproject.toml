@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68,<76"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "medical-imaging-platform-contracts"
+version = "1.0.0"
+description = "Versioned contracts shared by the medical imaging platform repositories"
+requires-python = ">=3.10,<3.11"
+dependencies = ["pydantic==2.10.6"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+medical_imaging_contracts = ["schemas/v1/*.json"]

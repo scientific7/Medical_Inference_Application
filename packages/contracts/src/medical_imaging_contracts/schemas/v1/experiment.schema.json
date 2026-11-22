@@ -1,0 +1,135 @@
+{
+  "$defs": {
+    "DatasetReleaseReference": {
+      "additionalProperties": false,
+      "properties": {
+        "dataset_id": {
+          "minLength": 1,
+          "title": "Dataset Id",
+          "type": "string"
+        },
+        "manifest_sha256": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Manifest Sha256",
+          "type": "object"
+        },
+        "receipt_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Receipt Sha256",
+          "type": "string"
+        },
+        "receipt_uri": {
+          "minLength": 1,
+          "title": "Receipt Uri",
+          "type": "string"
+        },
+        "release_id": {
+          "minLength": 1,
+          "title": "Release Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "status": {
+          "const": "published",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "dataset_id",
+        "release_id",
+        "receipt_uri",
+        "receipt_sha256",
+        "manifest_sha256",
+        "status"
+      ],
+      "title": "DatasetReleaseReference",
+      "type": "object"
+    }
+  },
+  "$id": "https://github.com/scientific7/medical-imaging-platform-contracts/blob/main/schemas/v1/experiment.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "architecture": {
+      "title": "Architecture",
+      "type": "string"
+    },
+    "config_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Config Sha256",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "dataset": {
+      "$ref": "#/$defs/DatasetReleaseReference"
+    },
+    "experiment_id": {
+      "minLength": 1,
+      "title": "Experiment Id",
+      "type": "string"
+    },
+    "framework": {
+      "enum": [
+        "pytorch",
+        "tensorflow"
+      ],
+      "title": "Framework",
+      "type": "string"
+    },
+    "framework_version": {
+      "title": "Framework Version",
+      "type": "string"
+    },
+    "git_commit": {
+      "title": "Git Commit",
+      "type": "string"
+    },
+    "metrics": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Metrics",
+      "type": "object"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "task": {
+      "enum": [
+        "classification",
+        "segmentation",
+        "detection"
+      ],
+      "title": "Task",
+      "type": "string"
+    }
+  },
+  "required": [
+    "experiment_id",
+    "dataset",
+    "architecture",
+    "task",
+    "framework",
+    "framework_version",
+    "git_commit",
+    "config_sha256",
+    "created_at"
+  ],
+  "title": "ExperimentRecord",
+  "type": "object"
+}

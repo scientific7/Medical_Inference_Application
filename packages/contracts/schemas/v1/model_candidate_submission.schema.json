@@ -1,0 +1,48 @@
+{
+  "$id": "https://github.com/scientific7/medical-imaging-platform-contracts/blob/main/schemas/v1/model_candidate_submission.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "artifact_path": {
+      "description": "Relative path under the configured private development artifact root",
+      "minLength": 1,
+      "title": "Artifact Path",
+      "type": "string"
+    },
+    "dataset_release_id": {
+      "minLength": 1,
+      "title": "Dataset Release Id",
+      "type": "string"
+    },
+    "experiment_id": {
+      "minLength": 1,
+      "title": "Experiment Id",
+      "type": "string"
+    },
+    "model_id": {
+      "minLength": 1,
+      "title": "Model Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "version": {
+      "minLength": 1,
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "model_id",
+    "version",
+    "artifact_path",
+    "experiment_id",
+    "dataset_release_id"
+  ],
+  "title": "ModelCandidateSubmission",
+  "type": "object"
+}

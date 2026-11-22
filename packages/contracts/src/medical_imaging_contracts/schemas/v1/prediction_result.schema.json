@@ -1,0 +1,90 @@
+{
+  "$id": "https://github.com/scientific7/medical-imaging-platform-contracts/blob/main/schemas/v1/prediction_result.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "artifact_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Artifact Sha256",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "disclaimer": {
+      "default": "Model-generated research prediction; not a diagnosis.",
+      "title": "Disclaimer",
+      "type": "string"
+    },
+    "input_dimensions": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Input Dimensions",
+      "type": "object"
+    },
+    "latency_ms": {
+      "minimum": 0.0,
+      "title": "Latency Ms",
+      "type": "number"
+    },
+    "lineage": {
+      "title": "Lineage",
+      "type": "object"
+    },
+    "model_id": {
+      "title": "Model Id",
+      "type": "string"
+    },
+    "model_version": {
+      "title": "Model Version",
+      "type": "string"
+    },
+    "output": {
+      "title": "Output",
+      "type": "object"
+    },
+    "prediction_id": {
+      "title": "Prediction Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "default": "completed",
+      "enum": [
+        "completed",
+        "failed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "task": {
+      "enum": [
+        "classification",
+        "segmentation",
+        "detection"
+      ],
+      "title": "Task",
+      "type": "string"
+    }
+  },
+  "required": [
+    "prediction_id",
+    "model_id",
+    "model_version",
+    "artifact_sha256",
+    "task",
+    "output",
+    "latency_ms",
+    "created_at"
+  ],
+  "title": "PredictionResult",
+  "type": "object"
+}

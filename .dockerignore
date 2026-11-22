@@ -1,0 +1,8 @@
+**
+!pyproject.toml
+!src/
+!src/medical_imaging_inference/
+!src/medical_imaging_inference/*.py
+!apps/
+!apps/frontend/
+!apps/frontend/*.py

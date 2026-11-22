@@ -1,0 +1,120 @@
+{
+  "$defs": {
+    "ModelArtifact": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "minLength": 1,
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "format": {
+          "enum": [
+            "torch_state_dict",
+            "torchscript",
+            "tensorflow_savedmodel",
+            "keras"
+          ],
+          "title": "Format",
+          "type": "string"
+        },
+        "manifest_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Manifest Sha256",
+          "type": "string"
+        },
+        "manifest_uri": {
+          "minLength": 1,
+          "title": "Manifest Uri",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "uri": {
+          "minLength": 1,
+          "title": "Uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "uri",
+        "sha256",
+        "manifest_uri",
+        "manifest_sha256",
+        "format"
+      ],
+      "title": "ModelArtifact",
+      "type": "object"
+    }
+  },
+  "$id": "https://github.com/scientific7/medical-imaging-platform-contracts/blob/main/schemas/v1/deployment_package.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "approval_reference": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Approval Reference"
+    },
+    "approved": {
+      "title": "Approved",
+      "type": "boolean"
+    },
+    "artifact": {
+      "$ref": "#/$defs/ModelArtifact"
+    },
+    "class_mapping": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Class Mapping",
+      "type": "object"
+    },
+    "model_id": {
+      "minLength": 1,
+      "title": "Model Id",
+      "type": "string"
+    },
+    "preprocessing": {
+      "title": "Preprocessing",
+      "type": "object"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "version": {
+      "minLength": 1,
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "model_id",
+    "version",
+    "artifact",
+    "preprocessing",
+    "approved"
+  ],
+  "title": "DeploymentPackage",
+  "type": "object"
+}

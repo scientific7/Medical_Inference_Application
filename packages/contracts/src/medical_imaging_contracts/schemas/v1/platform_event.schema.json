@@ -1,0 +1,66 @@
+{
+  "$id": "https://github.com/scientific7/medical-imaging-platform-contracts/blob/main/schemas/v1/platform_event.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "correlation_id": {
+      "minLength": 1,
+      "title": "Correlation Id",
+      "type": "string"
+    },
+    "event_id": {
+      "minLength": 1,
+      "title": "Event Id",
+      "type": "string"
+    },
+    "event_type": {
+      "enum": [
+        "DatasetReleasePublished",
+        "ExperimentStarted",
+        "ExperimentCompleted",
+        "ModelCandidateSubmitted",
+        "ModelRegistered",
+        "ModelApproved",
+        "ModelPromoted",
+        "PredictionCompleted"
+      ],
+      "title": "Event Type",
+      "type": "string"
+    },
+    "occurred_at": {
+      "format": "date-time",
+      "title": "Occurred At",
+      "type": "string"
+    },
+    "payload": {
+      "title": "Payload",
+      "type": "object"
+    },
+    "resource_id": {
+      "minLength": 1,
+      "title": "Resource Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_repository": {
+      "minLength": 1,
+      "title": "Source Repository",
+      "type": "string"
+    }
+  },
+  "required": [
+    "event_id",
+    "event_type",
+    "occurred_at",
+    "source_repository",
+    "resource_id",
+    "correlation_id"
+  ],
+  "title": "PlatformEvent",
+  "type": "object"
+}

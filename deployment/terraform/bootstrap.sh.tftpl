@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+dnf install -y docker
+systemctl enable --now docker
+base64 -d > /usr/local/sbin/deploy-medical-imaging <<'SCRIPT'
+${script}
+SCRIPT
+chmod 0700 /usr/local/sbin/deploy-medical-imaging
+args=()
+for encoded in ${args}; do
+  args+=("$(printf '%s' "$encoded" | base64 -d)")
+done
+/usr/local/sbin/deploy-medical-imaging "$${args[@]}"

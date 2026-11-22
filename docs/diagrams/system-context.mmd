@@ -1,0 +1,13 @@
+flowchart LR
+  U[Authenticated requester] -->|image and exact model version| API[Inference API]
+  API -->|OIDC workload token| MLOPS[MLOps approved-version endpoint]
+  MLOPS -->|approved version, artifact digest| API
+  API -->|read-only mount| PKG[Private checksummed package]
+  API --> PRE[Package-matched preprocessing]
+  PRE --> RUN[PyTorch TorchScript or TensorFlow SavedModel]
+  RUN --> POST[Task output interpretation]
+  POST --> RES[Structured prediction and disclaimer]
+  RES --> AUDIT[Prediction metadata and input digest]
+
+  classDef boundary fill:#eef,stroke:#336;
+  class MLOPS,PKG boundary;

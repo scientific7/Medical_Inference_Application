@@ -1,0 +1,95 @@
+{
+  "$id": "https://github.com/scientific7/medical-imaging-platform-contracts/blob/main/schemas/v1/dataset_manifest.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "image_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Image Sha256",
+      "type": "string"
+    },
+    "image_uri": {
+      "minLength": 1,
+      "title": "Image Uri",
+      "type": "string"
+    },
+    "label": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Label"
+    },
+    "lesion_group_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Lesion Group Id"
+    },
+    "metadata": {
+      "title": "Metadata",
+      "type": "object"
+    },
+    "patient_group_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Patient Group Id"
+    },
+    "sample_id": {
+      "minLength": 1,
+      "title": "Sample Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "split": {
+      "enum": [
+        "train",
+        "validation",
+        "test"
+      ],
+      "title": "Split",
+      "type": "string"
+    },
+    "task": {
+      "enum": [
+        "classification",
+        "segmentation",
+        "detection"
+      ],
+      "title": "Task",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sample_id",
+    "split",
+    "task",
+    "image_uri",
+    "image_sha256"
+  ],
+  "title": "DatasetManifestRecord",
+  "type": "object"
+}

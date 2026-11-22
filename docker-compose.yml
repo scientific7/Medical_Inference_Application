@@ -1,0 +1,56 @@
+services:
+  backend:
+    build:
+      context: .
+      target: backend
+      args:
+        FRAMEWORK_EXTRAS: ${FRAMEWORK_EXTRAS:-}
+    env_file:
+      - ${INFERENCE_ENV_FILE:-.env}
+    ports:
+      - "127.0.0.1:${INFERENCE_API_PORT:-8000}:8000"
+    volumes:
+      - inference-data:/var/lib/inference
+      - type: bind
+        source: ${INFERENCE_ARTIFACT_HOST_PATH:-./artifacts}
+        target: /approved-artifacts
+        read_only: true
+    environment:
+      INFERENCE_ARTIFACT_ROOT: /approved-artifacts
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).close()"]
+      interval: 15s
+      timeout: 4s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+
+  frontend:
+    build:
+      context: .
+      target: frontend
+    environment:
+      INFERENCE_API_URL: http://backend:8000
+    ports:
+      - "127.0.0.1:${INFERENCE_UI_PORT:-8501}:8501"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3).close()"]
+      interval: 10s
+      timeout: 4s
+      retries: 5
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+
+volumes:
+  inference-data:

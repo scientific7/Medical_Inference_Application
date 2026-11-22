@@ -1,0 +1,13 @@
+sequenceDiagram
+    participant U as Client
+    participant A as Inference API
+    participant G as Governance
+    participant R as Model runtime
+    participant D as Metadata database
+    U->>A: Submit upload and exact version
+    A->>G: Check current approval
+    G-->>A: Approved digest
+    A->>R: Verify or reuse model and execute
+    R-->>A: Output
+    A->>D: Store prediction metadata
+    A-->>U: Return results
