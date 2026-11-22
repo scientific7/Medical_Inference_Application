@@ -9,7 +9,8 @@ description = "Approved-model inference API for medical imaging research artifac
 requires-python = ">=3.10,<3.11"
 dependencies = ["fastapi==0.115.8", "uvicorn==0.34.0", "python-multipart==0.0.20",
                 "Pillow==11.3.0", "numpy==2.0.2", "PyJWT[crypto]==2.10.1",
-                "httpx==0.28.1", "pydantic==2.10.6", "SQLAlchemy>=2.0,<2.1"]
+                "httpx==0.28.1", "pydantic==2.10.6", "SQLAlchemy>=2.0,<2.1",
+                "medical-imaging-platform-contracts @ git+https://github.com/scientific7/Medical_Inference_Application.git@bc2739eb17f5208e680da707bd15319615f7bad2#subdirectory=packages/contracts"]
 
 [project.optional-dependencies]
 test = ["pytest==8.4.2"]

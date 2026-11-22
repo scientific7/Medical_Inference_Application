@@ -1,5 +1,12 @@
 # Medical Imaging Inference
 
+For the connected local research GUI and four-repository workflow, see
+[research platform setup](docs/integration/research-platform.md).
+Start all three GUIs with `python3 scripts/start_research_platform.py`.
+The shared Python contracts package is maintained in `packages/contracts`;
+consumers pin its Git commit. Successful predictions retain the experiment,
+dataset receipt and manifest digests in prediction history.
+
 Python 3.10 API for exact approved model versions from the MLOps registry. It validates upload size, type and readability, verifies package and weight digests, applies package preprocessing, supports classification/segmentation/detection output adapters, and records output metadata plus an input checksum without retaining image bytes or patient identifiers.
 
 Shared interfaces are owned by the [platform contracts repository](https://github.com/scientific7/medical-imaging-platform-contracts).

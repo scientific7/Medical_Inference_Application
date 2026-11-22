@@ -81,6 +81,29 @@ def test_publisher_reader_task_contracts(tmp_path, task):
         open_verified_release(ref["release_receipt_uri"], ref["release_receipt_digest"], signing_key=KEY)
 
 
+def test_immutable_receipt_and_missing_asset(tmp_path):
+    ref, spec = published(tmp_path / "dataset")
+    with pytest.raises(FileExistsError):
+        publish(spec, ref["release_receipt_uri"], signing_key=KEY)
+    rows = json.loads(Path(spec["partitions"]["train"]["uri"]).read_text())
+    Path(rows[0]["image_asset_uri"]).unlink()
+    with pytest.raises(FileNotFoundError):
+        open_verified_release(ref["release_receipt_uri"], ref["release_receipt_digest"],
+                              signing_key=KEY, cache_dir=tmp_path / "fresh-cache")
+
+
+def test_producer_rejects_cross_split_image_reuse(tmp_path):
+    _, spec = published(tmp_path / "dataset")
+    train = json.loads(Path(spec["partitions"]["train"]["uri"]).read_text())
+    test_path = Path(spec["partitions"]["test"]["uri"])
+    test = json.loads(test_path.read_text())
+    test[0].update({name: train[0][name] for name in ("image_asset_uri", "image_sha256")})
+    spec["partitions"]["test"] = document(test_path, test)
+    with pytest.raises(ValueError, match="Cross-split leakage"):
+        publish(spec, str(tmp_path / "must-not-exist.json"), signing_key=KEY)
+    assert not (tmp_path / "must-not-exist.json").exists()
+
+
 @pytest.mark.parametrize("framework", ["pytorch", "tensorflow"])
 def test_train_approve_predict(tmp_path, monkeypatch, framework):
     from medical_imaging_models.core import TrainingConfig

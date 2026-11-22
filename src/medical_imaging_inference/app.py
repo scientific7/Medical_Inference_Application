@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import os
 import time
@@ -11,6 +12,7 @@ from datetime import datetime, timezone
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.concurrency import run_in_threadpool
+from medical_imaging_contracts.models import InferenceRequest
 from pydantic import AwareDatetime
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.datastructures import Headers
@@ -108,6 +110,13 @@ async def _run_prediction(prediction: dict, model_id: str, version: str, image: 
         raise HTTPException(413, "Image exceeds the upload size limit")
     if image.content_type not in {"image/jpeg", "image/png", "image/tiff", "image/webp"}:
         raise HTTPException(415, "Unsupported image media type")
+    InferenceRequest(
+        request_id=prediction["prediction_id"],
+        model_id=model_id,
+        model_version=version,
+        image_sha256=hashlib.sha256(content).hexdigest(),
+        content_type=image.content_type,
+    )
     record = await _approved_record(model_id, version)
     if (
         record.get("state") != "approved"
@@ -120,11 +129,21 @@ async def _run_prediction(prediction: dict, model_id: str, version: str, image: 
         manifest = model.manifest
         spec = model.preprocessing
         prediction.update(
-            task=manifest["task"], device=model.device, artifact_sha256=record["artifact_digest"],
-            lineage={key: manifest[key] for key in (
-                "experiment_id", "dataset_release_id", "dataset_receipt_digest",
-                "manifest_digests", "git_commit", "config_digest"
-            ) if key in manifest},
+            task=manifest["task"],
+            device=model.device,
+            artifact_sha256=record["artifact_digest"],
+            lineage={
+                key: manifest[key]
+                for key in (
+                    "experiment_id",
+                    "dataset_release_id",
+                    "dataset_receipt_digest",
+                    "manifest_digests",
+                    "git_commit",
+                    "config_digest",
+                )
+                if key in manifest
+            },
         )
     except (ValueError, OSError, KeyError, RuntimeError, ImportError) as exc:
         raise HTTPException(503, "Approved package failed integrity or input contract validation") from exc
