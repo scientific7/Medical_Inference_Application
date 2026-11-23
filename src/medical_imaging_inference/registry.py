@@ -110,6 +110,51 @@ async def mlflow_candidates(base: str) -> list[dict]:
         raise RegistryUnavailable("MLflow catalogue is unavailable") from exc
 
 
+def catalogue_source_name() -> str | None:
+    if os.getenv("MLFLOW_TRACKING_URI"):
+        return "mlflow"
+    if (
+        os.getenv("INFERENCE_LOCAL_CATALOGUE")
+        and os.getenv("INFERENCE_ENVIRONMENT", "development") == "development"
+    ):
+        return "local"
+    if os.getenv("MLOPS_SERVICE_TOKEN"):
+        return "governance"
+    return None
+
+
+def _project_approved(candidate: dict, record: dict) -> dict:
+    result = {**candidate, "approved": True}
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    for field in (
+        "task",
+        "architecture",
+        "framework",
+        "experiment_id",
+        "dataset_release_id",
+        "dataset_receipt_digest",
+        "git_commit",
+        "config_digest",
+        "preprocessing",
+        "class_mapping",
+    ):
+        if field in metadata:
+            result[field] = metadata[field]
+        elif field in record and record[field] is not None:
+            result[field] = record[field]
+    result["limitations"] = metadata.get("known_limitations", record.get("limitations", []))
+    result["intended_use"] = metadata.get("intended_use")
+    evaluation = evaluation_record(candidate, metadata)
+    if evaluation:
+        result["evaluation"] = evaluation
+    result.update(
+        created_at=record.get("created_at"),
+        approved_at=record.get("approved_at"),
+        artifact_digest=record.get("artifact_digest"),
+    )
+    return result
+
+
 async def governance_candidates() -> list[dict]:
     base = os.getenv("MLOPS_API_URL", "http://127.0.0.1:8081").rstrip("/")
     token = os.getenv("MLOPS_SERVICE_TOKEN")
@@ -125,15 +170,29 @@ async def governance_candidates() -> list[dict]:
                     headers={"Authorization": f"Bearer {token}"},
                 )
                 response.raise_for_status()
-                rows = response.json()["items"]
+                payload = response.json()
+                rows = payload.get("items") if isinstance(payload, dict) else payload
+                if not isinstance(rows, list):
+                    raise ValueError("Expected a list of approved models")
                 for row in rows:
-                    selection = ModelSelection(model_id=row["model_id"], version=row["version"])
-                    candidates[(selection.model_id, selection.version)] = selection.model_dump()
+                    if not isinstance(row, dict):
+                        continue
+                    state = row.get("state", row.get("status"))
+                    if state is not None and state != "approved":
+                        continue
+                    selection = ModelSelection(model_id=str(row["model_id"]), version=str(row["version"]))
+                    candidates[(selection.model_id, selection.version)] = _project_approved(
+                        selection.model_dump(), row
+                    )
                 if len(rows) < 100:
                     return list(candidates.values())
         raise ValueError("Governance catalogue exceeds discovery limit")
     except (httpx.HTTPError, ValueError, TypeError, KeyError) as exc:
         raise RegistryUnavailable("Governance catalogue is unavailable") from exc
+
+
+async def mlops_approved_models() -> list[dict]:
+    return await governance_candidates()
 
 
 async def catalogue() -> list[dict]:
@@ -147,8 +206,10 @@ async def catalogue() -> list[dict]:
             candidates = [ModelSelection.model_validate(row).model_dump() for row in json.loads(raw)]
         except (OSError, ValueError, TypeError) as exc:
             raise RegistryUnavailable("Local development catalogue is unavailable") from exc
+    elif os.getenv("MLOPS_SERVICE_TOKEN"):
+        return await governance_candidates()
     else:
-        candidates = await governance_candidates()
+        raise RegistryUnavailable("Model catalogue is not configured")
 
     # Use bounded fan-out and fail visibly if approval cannot be established.
     entries = []
@@ -161,31 +222,6 @@ async def catalogue() -> list[dict]:
 
 async def _with_approval(candidate: dict) -> dict:
     record = await approval(candidate["model_id"], candidate["version"])
-    result = {**candidate, "approved": record is not None}
-    if record:
-        metadata = record.get("metadata", {})
-        for field in (
-            "task",
-            "architecture",
-            "framework",
-            "experiment_id",
-            "dataset_release_id",
-            "dataset_receipt_digest",
-            "git_commit",
-            "config_digest",
-            "preprocessing",
-            "class_mapping",
-        ):
-            if field in metadata:
-                result[field] = metadata[field]
-        result["limitations"] = metadata.get("known_limitations", record.get("limitations", []))
-        result["intended_use"] = metadata.get("intended_use")
-        evaluation = evaluation_record(candidate, metadata)
-        if evaluation:
-            result["evaluation"] = evaluation
-        result.update(
-            created_at=record.get("created_at"),
-            approved_at=record.get("approved_at"),
-            artifact_digest=record.get("artifact_digest"),
-        )
-    return result
+    if record is None:
+        return {**candidate, "approved": False}
+    return _project_approved(candidate, record)

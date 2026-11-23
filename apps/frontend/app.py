@@ -173,6 +173,17 @@ def show_prediction(image, result):
         left.image(image, caption="Original")
         right.image(annotated, caption="Detections")
         table(rows, "No detections returned.")
+    if result.get("disclaimer"):
+        st.caption(result["disclaimer"])
+    with st.expander("Provenance & lineage", expanded=False):
+        st.json(
+            {
+                "prediction_id": result.get("prediction_id"),
+                "artifact_sha256": result.get("artifact_sha256"),
+                "input_dimensions": result.get("input_dimensions"),
+                "lineage": result.get("lineage", {}),
+            }
+        )
     st.download_button(
         "Export prediction metadata",
         json.dumps(result, indent=2),
@@ -321,12 +332,18 @@ def clear_batch():
 
 
 token = st.sidebar.text_input("OIDC access token", type="password", on_change=clear_batch)
+dev_mode = (
+    os.getenv("INFERENCE_AUTH_MODE", "").strip().lower() == "dev"
+    and os.getenv("INFERENCE_ENVIRONMENT", "development").strip().lower() != "production"
+)
+if dev_mode:
+    st.sidebar.caption("Local development auth mode enabled (loopback only).")
 st.title(page)
 st.caption("For research use only. Results must not be used as a diagnosis.")
 local_research = os.getenv("INFERENCE_RESEARCH_UI") == "1"
 if local_research:
     st.sidebar.caption("Local research identity")
-if token or local_research:
+if token or local_research or dev_mode:
     try:
         dict(zip(PAGES, (overview, registry, deployment, inference, history, evaluation, administration)))[
             page

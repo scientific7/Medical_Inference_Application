@@ -200,10 +200,36 @@ def metrics(actor: str, *, admin: bool) -> dict:
             FROM prediction_records WHERE (? OR actor=?) GROUP BY day ORDER BY day DESC LIMIT 30""",
             (admin, actor),
         ).fetchall()
+        model_rows = db.execute(
+            """SELECT model_id, model_version, COUNT(*) AS count,
+            COUNT(CASE WHEN status='failed' THEN 1 END) AS failed
+            FROM prediction_records WHERE (? OR actor=?)
+            GROUP BY model_id, model_version ORDER BY count DESC, model_id ASC""",
+            (admin, actor),
+        ).fetchall()
+        latencies = [
+            float(row["latency_ms"])
+            for row in db.execute(
+                """SELECT latency_ms FROM prediction_records
+                WHERE (? OR actor=?) AND status='completed' ORDER BY latency_ms ASC""",
+                (admin, actor),
+            ).fetchall()
+        ]
+    totals_dict = dict(totals)
+    total_count = int(totals_dict.get("total") or 0)
+    failed_count = int(totals_dict.get("failed") or 0)
+    error_rate = round(failed_count / total_count, 4) if total_count > 0 else 0.0
+    p95_latency_ms = None
+    if latencies:
+        index = min(len(latencies) - 1, max(0, int((len(latencies) - 1) * 0.95)))
+        p95_latency_ms = latencies[index]
     return {
-        **dict(totals),
+        **totals_dict,
         "latency_percentiles_ms": dict(percentiles),
+        "error_rate": error_rate,
+        "p95_latency_ms": p95_latency_ms,
         "tasks": [dict(row) for row in tasks],
+        "models": [dict(row) for row in model_rows],
         "daily_requests": [dict(row) for row in reversed(activity)],
     }
 
