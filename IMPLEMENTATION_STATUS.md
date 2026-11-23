@@ -24,10 +24,11 @@
    runtime suite: 7 passed, 1 skipped. MPS executed; CUDA skipped. Script syntax,
    workflow YAML parsing, documentation links, and `git diff --check` passed.
    The push at `117b065` triggered CI: Terraform, unit, PyTorch/TensorFlow framework,
-   lint, frontend, integration, and docs jobs passed. Docker failed because the
-   slim image lacked Git for the pinned direct Git dependency. The Dockerfile fix
-   is local and awaits the follow-up remote run. GitHub currently lists only CI,
-   with no CUDA runner or repository Actions variables.
+   lint, frontend, integration, and docs jobs passed. Docker initially failed because
+   the slim image lacked Git for the pinned direct Git dependency. Follow-up commit
+   `33a6a13` moved Git into dependency-builder stages. Both push and pull-request CI
+   runs for that commit passed, including container build, startup, and health checks.
+   GitHub currently lists only CI, with no CUDA runner or repository Actions variables.
 5. **Functional evidence.** Approved synthetic detection output, package digest
    verification, and device placement passed on CPU and MPS. CUDA is unverified.
 6. **Integration.** PyTorch CI ran the CPU coverage successfully. The manual CUDA
@@ -38,10 +39,9 @@
    [CUDA runner setup](docs/deployment/cuda-runner.md).
 7. **Known issues.** Runner registration, runner dependencies, companion checkouts,
    and Actions variables require repository-owner setup. CUDA remains unverified.
-8. **Acceptance criteria.** Local CPU/MPS behavior and the pushed PyTorch CI job
-   are verified. The Docker fix and its CI rerun are unverified. CUDA and browser
-   integration on CUDA remain unverified pending default-branch workflow setup and
-   runner registration.
+8. **Acceptance criteria.** Local CPU/MPS behavior, PyTorch/TensorFlow CI, Docker
+   build and health checks are verified. CUDA and browser integration on CUDA remain
+   unverified pending default-branch workflow setup and runner registration.
 9. **Next milestone.** Provision/register the documented runner and variables, then
    manually dispatch **CUDA acceptance** on `integration/research-platform`.
 
