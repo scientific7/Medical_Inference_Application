@@ -97,6 +97,80 @@ async def mlflow_candidates(base: str) -> list[dict]:
         raise RegistryUnavailable("MLflow catalogue is unavailable") from exc
 
 
+def catalogue_source_name() -> str | None:
+    if os.getenv("MLFLOW_TRACKING_URI"):
+        return "mlflow"
+    if os.getenv("INFERENCE_LOCAL_CATALOGUE") and os.getenv("INFERENCE_ENVIRONMENT", "development") == "development":
+        return "local"
+    if os.getenv("MLOPS_SERVICE_TOKEN"):
+        return "mlops"
+    return None
+
+
+def _project_approved(candidate: dict, record: dict) -> dict:
+    result = {**candidate, "approved": True}
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    for field in (
+        "task",
+        "architecture",
+        "framework",
+        "experiment_id",
+        "dataset_release_id",
+        "dataset_receipt_digest",
+        "git_commit",
+        "config_digest",
+        "preprocessing",
+        "class_mapping",
+    ):
+        if field in metadata:
+            result[field] = metadata[field]
+        elif field in record and record[field] is not None:
+            result[field] = record[field]
+    evaluation = evaluation_record(candidate, metadata)
+    if evaluation:
+        result["evaluation"] = evaluation
+    result.update(
+        created_at=record.get("created_at"),
+        approved_at=record.get("approved_at"),
+        artifact_digest=record.get("artifact_digest"),
+    )
+    return result
+
+
+async def mlops_approved_models() -> list[dict]:
+    base = os.getenv("MLOPS_API_URL", "http://127.0.0.1:8081").rstrip("/")
+    token = os.getenv("MLOPS_SERVICE_TOKEN")
+    if not token:
+        raise RegistryUnavailable("Governance service identity is not configured")
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(
+                f"{base}/api/v1/inference/models",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            response.raise_for_status()
+            payload = response.json()
+            rows = payload.get("items") if isinstance(payload, dict) else payload
+            if not isinstance(rows, list):
+                raise ValueError("Expected a list of approved models")
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        raise RegistryUnavailable("Could not read approved models from governance") from exc
+
+    entries = []
+    for record in rows:
+        if not isinstance(record, dict) or record.get("state") != "approved":
+            continue
+        try:
+            selection = ModelSelection(
+                model_id=str(record.get("model_id", "")),
+                version=str(record.get("version", "")),
+            )
+        except ValueError:
+            continue
+        entries.append(_project_approved(selection.model_dump(), record))
+    return entries
+
+
 async def catalogue() -> list[dict]:
     base = os.getenv("MLFLOW_TRACKING_URI")
     local = os.getenv("INFERENCE_LOCAL_CATALOGUE")
@@ -108,6 +182,8 @@ async def catalogue() -> list[dict]:
             candidates = [ModelSelection.model_validate(row).model_dump() for row in json.loads(raw)]
         except (OSError, ValueError, TypeError) as exc:
             raise RegistryUnavailable("Local development catalogue is unavailable") from exc
+    elif os.getenv("MLOPS_SERVICE_TOKEN"):
+        return await mlops_approved_models()
     else:
         raise RegistryUnavailable("Model catalogue is not configured")
 
@@ -122,29 +198,6 @@ async def catalogue() -> list[dict]:
 
 async def _with_approval(candidate: dict) -> dict:
     record = await approval(candidate["model_id"], candidate["version"])
-    result = {**candidate, "approved": record is not None}
-    if record:
-        metadata = record.get("metadata", {})
-        for field in (
-            "task",
-            "architecture",
-            "framework",
-            "experiment_id",
-            "dataset_release_id",
-            "dataset_receipt_digest",
-            "git_commit",
-            "config_digest",
-            "preprocessing",
-            "class_mapping",
-        ):
-            if field in metadata:
-                result[field] = metadata[field]
-        evaluation = evaluation_record(candidate, metadata)
-        if evaluation:
-            result["evaluation"] = evaluation
-        result.update(
-            created_at=record.get("created_at"),
-            approved_at=record.get("approved_at"),
-            artifact_digest=record.get("artifact_digest"),
-        )
-    return result
+    if record is None:
+        return {**candidate, "approved": False}
+    return _project_approved(candidate, record)

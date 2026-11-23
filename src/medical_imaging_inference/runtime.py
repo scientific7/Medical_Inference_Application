@@ -25,6 +25,12 @@ class LoadedModel:
 
 
 def load_export(package: Path, manifest: dict) -> LoadedModel:
+    if manifest.get("task") not in {"classification", "segmentation", "detection"}:
+        raise ValueError("Unsupported model task")
+    if manifest.get("framework") not in {"pytorch", "tensorflow"}:
+        raise ValueError("Unsupported model framework")
+    if not isinstance(manifest.get("class_mapping"), dict):
+        raise ValueError("Model manifest requires a class_mapping object")
     spec = PreprocessingSpec.from_manifest(manifest)
     OutputSettings.model_validate(manifest.get("postprocessing", {}))
     device = os.getenv("INFERENCE_DEVICE", "cpu")
@@ -76,6 +82,9 @@ class ModelCache:
         self.capacity = capacity
         self._lock = Lock()
         self._models: OrderedDict[tuple[str, str, str], LoadedModel] = OrderedDict()
+        self._hits = 0
+        self._misses = 0
+        self._evictions = 0
 
     def get(self, record: dict) -> LoadedModel:
         if record.get("state") != "approved":
@@ -83,10 +92,14 @@ class ModelCache:
         key = (record["model_id"], record["version"], record["artifact_digest"])
         with self._lock:
             if key not in self._models:
+                self._misses += 1
                 package, manifest = verified_package(record)
                 self._models[key] = load_export(package, manifest)
                 if len(self._models) > self.capacity:
                     self._models.popitem(last=False)
+                    self._evictions += 1
+            else:
+                self._hits += 1
             self._models.move_to_end(key)
             return self._models[key]
 
@@ -103,3 +116,13 @@ class ModelCache:
                 {"model_id": key[0], "version": key[1], "device": model.device, "integrity": "verified"}
                 for key, model in self._models.items()
             ]
+
+    def stats(self) -> dict:
+        with self._lock:
+            return {
+                "capacity": self.capacity,
+                "loaded": len(self._models),
+                "hits": self._hits,
+                "misses": self._misses,
+                "evictions": self._evictions,
+            }

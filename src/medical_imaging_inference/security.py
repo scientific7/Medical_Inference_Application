@@ -5,17 +5,55 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+from functools import lru_cache
 from pathlib import Path
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .storage import artifact_store_config, s3_package
 
 bearer = HTTPBearer(auto_error=False)
+VALID_ROLES = frozenset({"inference_viewer", "inference_user", "inference_admin"})
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "testclient"})
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
-def authorize(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> dict:
+@lru_cache(maxsize=8)
+def _jwks_client(jwks_uri: str):
+    import jwt
+
+    return jwt.PyJWKClient(jwks_uri, cache_keys=True, lifespan=300)
+
+
+def authorize(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+) -> dict:
+    auth_mode = os.getenv("INFERENCE_AUTH_MODE", "oidc").strip().lower()
+    environment = os.getenv("INFERENCE_ENVIRONMENT", "development").strip().lower()
+    if auth_mode == "dev":
+        if environment == "production":
+            raise HTTPException(503, "Development auth mode is forbidden in production")
+        client_host = request.client.host if request.client else ""
+        if client_host not in LOOPBACK_HOSTS:
+            raise HTTPException(403, "Development auth mode is restricted to loopback")
+        subject = (
+            request.headers.get("X-Dev-User")
+            or request.headers.get("X-Research-Actor")
+            or "local-developer"
+        ).strip()
+        if not subject:
+            raise HTTPException(401, "Development subject must not be empty")
+        raw_roles = request.headers.get("X-Dev-Roles", "inference_user,inference_viewer,inference_admin")
+        roles = [role.strip() for role in re.split(r"[\s,]+", raw_roles) if role.strip()]
+        if not (VALID_ROLES & set(roles)):
+            raise HTTPException(403, "Inference role is required")
+        return {"subject": subject, "roles": roles}
+    if auth_mode != "oidc":
+        raise HTTPException(503, "Unsupported inference authentication mode")
+
     issuer, jwks_uri, audience = (
         os.getenv("OIDC_ISSUER", ""),
         os.getenv("OIDC_JWKS_URI", ""),
@@ -28,7 +66,7 @@ def authorize(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)
     try:
         import jwt
 
-        signing_key = jwt.PyJWKClient(jwks_uri).get_signing_key_from_jwt(credentials.credentials).key
+        signing_key = _jwks_client(jwks_uri).get_signing_key_from_jwt(credentials.credentials).key
         claims = jwt.decode(
             credentials.credentials, signing_key, algorithms=["RS256"], issuer=issuer, audience=audience
         )
@@ -40,7 +78,7 @@ def authorize(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)
         roles = roles.split()
     if not isinstance(roles, list) or not all(isinstance(role, str) for role in roles):
         raise HTTPException(403, "Invalid inference role claim")
-    if not ({"inference_viewer", "inference_user", "inference_admin"} & set(roles)):
+    if not (VALID_ROLES & set(roles)):
         raise HTTPException(403, "Inference role is required")
     subject = claims.get("sub")
     if not isinstance(subject, str) or not subject:
@@ -74,23 +112,53 @@ def file_digest(path: Path) -> str:
 
 
 def verify_directory(package: Path, record: dict) -> dict:
+    if record.get("state") != "approved":
+        raise ValueError("Artifact requires explicit approval")
+    expected_digest = record.get("artifact_digest")
+    if not isinstance(expected_digest, str) or not SHA256_RE.fullmatch(expected_digest):
+        raise ValueError("Invalid approved package digest")
     if any(path.is_symlink() for path in package.rglob("*")):
         raise ValueError("Symbolic links are not allowed in approved packages")
     manifest_path = package / "model_manifest.json"
     if not manifest_path.is_file():
         raise ValueError("Approved package is missing its manifest")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    ref = manifest.get("weights", {})
-    weights = (package / ref.get("path", "")).resolve()
+    if not isinstance(manifest, dict):
+        raise ValueError("Approved package manifest must be a JSON object")
+    if (
+        manifest.get("model_id") is not None
+        and record.get("model_id") is not None
+        and manifest["model_id"] != record["model_id"]
+    ):
+        raise ValueError("Manifest model_id does not match registry record")
+    if (
+        manifest.get("version") is not None
+        and record.get("version") is not None
+        and str(manifest["version"]) != str(record["version"])
+    ):
+        raise ValueError("Manifest version does not match registry record")
+    ref = manifest.get("weights")
+    if not isinstance(ref, dict):
+        raise ValueError("Approved package manifest is missing weights metadata")
+    weights_rel = ref.get("path")
+    expected_weights_sha = ref.get("sha256")
+    if (
+        not isinstance(weights_rel, str)
+        or not weights_rel
+        or not isinstance(expected_weights_sha, str)
+        or not SHA256_RE.fullmatch(expected_weights_sha)
+    ):
+        raise ValueError("Approved weights metadata is invalid")
+    weights = (package / weights_rel).resolve()
     if package not in weights.parents or not weights.is_file():
         raise ValueError("Approved weights path is invalid")
     digest = file_digest(weights)
-    if digest != ref.get("sha256"):
+    if digest != expected_weights_sha:
         raise ValueError("Approved model weight checksum mismatch")
     filenames = sorted(item.relative_to(package).as_posix() for item in package.rglob("*") if item.is_file())
     package_digest = hashlib.sha256(
         "".join(f"{name}:{file_digest(package / name)}\n" for name in filenames).encode()
     ).hexdigest()
-    if record.get("artifact_digest") != package_digest:
+    if expected_digest != package_digest:
         raise ValueError("Approved package digest differs from registry record")
     return manifest

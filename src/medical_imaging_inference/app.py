@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.concurrency import run_in_threadpool
+from fastapi.middleware.cors import CORSMiddleware
 from medical_imaging_contracts.models import InferenceRequest
 from pydantic import AwareDatetime
 from sqlalchemy.exc import SQLAlchemyError
@@ -23,22 +24,65 @@ from .datasets import published_release
 from .http_limits import UploadLimits
 from .postprocessing import interpret as _interpret
 from .preprocessing import InvalidImage
-from .registry import ModelSelection, RegistryUnavailable, approval, catalogue
+from .registry import ModelSelection, RegistryUnavailable, approval, catalogue, catalogue_source_name
 from .runtime import ModelCache
 from .security import authorize, authorize_researcher
 from .storage import artifact_store_status
 from .telemetry import inference_event
 
+
+def _positive_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(1, value)
+
+
+def _inference_timeout() -> float:
+    raw = os.getenv("INFERENCE_TIMEOUT_SECONDS")
+    if not raw:
+        return 30.0
+    try:
+        value = float(raw)
+    except ValueError:
+        return 30.0
+    return max(0.05, value)
+
+
 app = FastAPI(title="Medical Imaging Inference", version="1.0.0")
+_cors_origins = [
+    origin.strip() for origin in os.getenv("INFERENCE_CORS_ORIGINS", "").split(",") if origin.strip()
+]
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 MAX_IMAGE_PIXELS = 40_000_000
-models = ModelCache()
+models = ModelCache(capacity=_positive_int("INFERENCE_MODEL_CACHE_SIZE", 2))
 batches = BatchQueue()
 MAX_BATCH_IMAGES = 8
 MAX_BATCH_BYTES = 40 * 1024 * 1024
 app.add_middleware(UploadLimits, image_bytes=MAX_IMAGE_BYTES, batch_bytes=MAX_BATCH_BYTES)
-INFERENCE_CONCURRENCY = 2
+INFERENCE_CONCURRENCY = _positive_int("INFERENCE_CONCURRENCY", 2)
 inference_slots = asyncio.Semaphore(INFERENCE_CONCURRENCY)
+
+
+def _database_reachable() -> bool:
+    try:
+        with audit.connect() as db:
+            db.execute("SELECT prediction_id FROM prediction_records LIMIT 1").fetchone()
+        return True
+    except (OSError, ValueError, ImportError, SQLAlchemyError):
+        return False
 
 
 async def _approved_record(model_id: str, version: str) -> dict:
@@ -53,7 +97,7 @@ async def _approved_record(model_id: str, version: str) -> dict:
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "service": "medical-imaging-inference", "version": app.version}
 
 
 @app.get("/ready")
@@ -70,7 +114,15 @@ async def readiness():
         response.raise_for_status()
     except Exception as exc:
         raise HTTPException(503, "MLOps registry is unavailable") from exc
-    return {"status": "ready", "mlops_api_configured": True}
+    if not await run_in_threadpool(_database_reachable):
+        raise HTTPException(503, "Inference database is unavailable")
+    artifact_store, _ = await run_in_threadpool(artifact_store_status)
+    return {
+        "status": "ready",
+        "mlops_api_configured": True,
+        "database": "reachable",
+        "artifact_store": artifact_store,
+    }
 
 
 @app.post("/api/v1/predictions/{model_id}/{version}")
@@ -85,27 +137,42 @@ async def predict(
         "model_version": version,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+    runtime_context: dict[str, str | None] = {"device": None}
     try:
         async with inference_slots:
-            content = await _run_prediction(prediction, model_id, version, image)
+            content = await _run_prediction(prediction, model_id, version, image, runtime_context)
     except HTTPException as exc:
         prediction.update(
             status="failed",
             error_code=f"http_{exc.status_code}",
             latency_ms=(time.perf_counter() - started) * 1000,
         )
-        inference_event(prediction)
-        await run_in_threadpool(audit.record_prediction, prediction, None, user["subject"])
+        audit_payload = (
+            {**prediction, "device": runtime_context["device"]} if runtime_context["device"] else prediction
+        )
+        inference_event(audit_payload)
+        await run_in_threadpool(audit.record_prediction, audit_payload, None, user["subject"])
         exc.headers = {**(exc.headers or {}), "X-Request-ID": prediction["prediction_id"]}
         raise
     prediction.update(status="completed", latency_ms=(time.perf_counter() - started) * 1000)
-    await run_in_threadpool(audit.record_prediction, prediction, content, user["subject"])
-    inference_event(prediction)
+    audit_payload = (
+        {**prediction, "device": runtime_context["device"]} if runtime_context["device"] else prediction
+    )
+    await run_in_threadpool(audit.record_prediction, audit_payload, content, user["subject"])
+    inference_event(audit_payload)
     return prediction
 
 
-async def _run_prediction(prediction: dict, model_id: str, version: str, image: UploadFile) -> bytes:
+async def _run_prediction(
+    prediction: dict,
+    model_id: str,
+    version: str,
+    image: UploadFile,
+    runtime_context: dict[str, str | None],
+) -> bytes:
     content = await image.read(MAX_IMAGE_BYTES + 1)
+    if not content:
+        raise HTTPException(422, "Uploaded image is empty")
     if len(content) > MAX_IMAGE_BYTES:
         raise HTTPException(413, "Image exceeds the upload size limit")
     if image.content_type not in {"image/jpeg", "image/png", "image/tiff", "image/webp"}:
@@ -128,22 +195,29 @@ async def _run_prediction(prediction: dict, model_id: str, version: str, image: 
         model = await run_in_threadpool(models.get, record)
         manifest = model.manifest
         spec = model.preprocessing
+        runtime_context["device"] = model.device
+        record_metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        lineage = {}
+        for key in (
+            "experiment_id",
+            "dataset_release_id",
+            "dataset_receipt_digest",
+            "manifest_digests",
+            "git_commit",
+            "config_digest",
+        ):
+            if key in manifest:
+                lineage[key] = manifest[key]
+            elif key in record_metadata:
+                lineage[key] = record_metadata[key]
+        if record.get("approved_at"):
+            lineage["approved_at"] = record["approved_at"]
+        if record.get("approval_reference"):
+            lineage["approval_reference"] = record["approval_reference"]
         prediction.update(
             task=manifest["task"],
-            device=model.device,
             artifact_sha256=record["artifact_digest"],
-            lineage={
-                key: manifest[key]
-                for key in (
-                    "experiment_id",
-                    "dataset_release_id",
-                    "dataset_receipt_digest",
-                    "manifest_digests",
-                    "git_commit",
-                    "config_digest",
-                )
-                if key in manifest
-            },
+            lineage=lineage,
         )
     except (ValueError, OSError, KeyError, RuntimeError, ImportError) as exc:
         raise HTTPException(503, "Approved package failed integrity or input contract validation") from exc
@@ -159,7 +233,7 @@ async def _run_prediction(prediction: dict, model_id: str, version: str, image: 
         raise HTTPException(422, str(exc)) from exc
     try:
         height, width = spec.image_size
-        raw = await run_in_threadpool(model.run, pixels)
+        raw = await asyncio.wait_for(run_in_threadpool(model.run, pixels), timeout=_inference_timeout())
         output = await run_in_threadpool(
             _interpret,
             manifest["task"],
@@ -170,13 +244,15 @@ async def _run_prediction(prediction: dict, model_id: str, version: str, image: 
             framework=manifest["framework"],
             settings=manifest.get("postprocessing"),
         )
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(504, "Approved model inference timed out") from exc
     except (ValueError, OSError, KeyError, RuntimeError, ImportError) as exc:
         raise HTTPException(503, "Approved model could not execute inference") from exc
     original_width, original_height = original_size
     prediction.update(
         output=output,
         input_dimensions={"width": original_width, "height": original_height},
-        disclaimer="Model-generated prediction for research; not a diagnosis.",
+        disclaimer="Model-generated research prediction; not a diagnosis.",
     )
     return content
 
@@ -278,7 +354,10 @@ def inference_history(
 
 @app.get("/api/v1/system/metrics")
 def system_metrics(user: dict = Depends(authorize)):
-    return audit.metrics(user["subject"], admin="inference_admin" in user["roles"])
+    return {
+        **audit.metrics(user["subject"], admin="inference_admin" in user["roles"]),
+        "cache": models.stats(),
+    }
 
 
 @app.get("/api/v1/inference/history/{prediction_id}")
@@ -329,6 +408,26 @@ async def _catalogue() -> list[dict]:
         return await catalogue()
     except RegistryUnavailable as exc:
         raise HTTPException(503, str(exc)) from exc
+
+
+@app.get("/api/v1/models/approved")
+async def list_approved_models(
+    task: str | None = None,
+    framework: str | None = None,
+    architecture: str | None = None,
+    version: str | None = None,
+    _user: dict = Depends(authorize),
+):
+    filters = dict(
+        task=task, framework=framework, architecture=architecture, version=version, approved=True
+    )
+    return {
+        "items": [
+            row
+            for row in await _catalogue()
+            if all(value is None or row.get(field) == value for field, value in filters.items())
+        ]
+    }
 
 
 @app.get("/api/v1/models")
@@ -390,26 +489,13 @@ async def get_evaluation(model_id: str, version: str, _user: dict = Depends(auth
 
 @app.get("/api/v1/system/status")
 async def system_status(_user: dict = Depends(authorize_admin)):
-    def database_status():
-        try:
-            with audit.connect() as db:
-                db.execute("SELECT prediction_id FROM prediction_records LIMIT 1").fetchone()
-            return "reachable"
-        except (OSError, ValueError, ImportError, SQLAlchemyError):
-            return "unavailable"
-
+    database = "reachable" if await run_in_threadpool(_database_reachable) else "unavailable"
     try:
         await readiness()
         governance = "reachable"
     except HTTPException:
         governance = "unavailable"
-    catalogue_source = (
-        "mlflow"
-        if os.getenv("MLFLOW_TRACKING_URI")
-        else "local"
-        if os.getenv("INFERENCE_LOCAL_CATALOGUE")
-        else None
-    )
+    catalogue_source = catalogue_source_name()
     if catalogue_source:
         try:
             await catalogue()
@@ -421,7 +507,7 @@ async def system_status(_user: dict = Depends(authorize_admin)):
     artifact_store, s3_status = await run_in_threadpool(artifact_store_status)
     return {
         "backend": "reachable",
-        "database": await run_in_threadpool(database_status),
+        "database": database,
         "governance": governance,
         "catalogue_source": catalogue_source,
         "catalogue_status": catalogue_status,
@@ -430,6 +516,7 @@ async def system_status(_user: dict = Depends(authorize_admin)):
         "environment": os.getenv("INFERENCE_ENVIRONMENT", "development"),
         "deployment_version": app.version,
         "loaded_models": models.active(),
+        "model_cache": models.stats(),
         "upload_limits": {
             "image_bytes": MAX_IMAGE_BYTES,
             "image_pixels": MAX_IMAGE_PIXELS,
@@ -437,4 +524,5 @@ async def system_status(_user: dict = Depends(authorize_admin)):
             "batch_bytes": MAX_BATCH_BYTES,
         },
         "inference_concurrency": INFERENCE_CONCURRENCY,
+        "inference_timeout_seconds": _inference_timeout(),
     }
