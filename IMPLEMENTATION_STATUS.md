@@ -1,41 +1,47 @@
 # Implementation status
 
 **Repository** medical-imaging-inference-platform, Layer 4
-**Current phase** P4 CUDA runner acceptance
+**Current phase** P4 CUDA runner acceptance; container CI follow-up
 **Current branch** `integration/research-platform`
 
 ## Current milestone — Detection package CI coverage and CUDA runner gate
 
 1. **Original requirements.** Run the PyTorch runtime and approved detection
-   package tests on CUDA, and include the browser-based approved-model flow.
+   package tests on CUDA, include the browser-based approved-model flow, and keep
+   container builds working with the pinned contracts dependency.
 2. **Implementation status.** The approved synthetic detection-package test now
    covers CPU, CUDA, and MPS. The PyTorch CI matrix runs the runtime suite on CPU.
-   The manual CUDA workflow and framework/hardware preflight are prepared locally,
-   but the workflow is not published and no runner is configured.
+   The CUDA workflow is pushed to this branch but is not listed by GitHub until it
+   is present on the repository's default branch. The Docker image now installs its
+   Git dependency in builder stages only. No CUDA runner is configured.
 3. **Modified files.** `tests/test_runtime.py` checks approved package integrity,
    loading, and detections on requested devices. `.github/workflows/ci.yml` adds the
    runtime suite to the PyTorch job. `.github/workflows/cuda-acceptance.yml` and
    `scripts/check_cuda_acceptance.sh` provide manual CUDA/browser acceptance.
-   `docs/deployment/cuda-runner.md` documents setup. This report records remaining
-   external dependencies.
+   `Dockerfile` isolates Git in dependency-build stages. `docs/deployment/cuda-runner.md`
+   documents setup. This report records remaining external dependencies.
 4. **Testing.** Full local suite: 46 passed, 4 skipped, zero failures. Targeted
    runtime suite: 7 passed, 1 skipped. MPS executed; CUDA skipped. Script syntax,
    workflow YAML parsing, documentation links, and `git diff --check` passed.
-   GitHub still has no published CUDA workflow, registered runners, or repository
-   Actions variables. Remote CI has not run these local edits.
+   The push at `117b065` triggered CI: Terraform, unit, PyTorch/TensorFlow framework,
+   lint, frontend, integration, and docs jobs passed. Docker failed because the
+   slim image lacked Git for the pinned direct Git dependency. The Dockerfile fix
+   is local and awaits the follow-up remote run. GitHub currently lists only CI,
+   with no CUDA runner or repository Actions variables.
 5. **Functional evidence.** Approved synthetic detection output, package digest
    verification, and device placement passed on CPU and MPS. CUDA is unverified.
-6. **Integration.** The PyTorch framework CI job will run the CPU coverage when
-   published. The manual CUDA workflow requires a runner labelled `self-hosted`, `linux`,
+6. **Integration.** PyTorch CI ran the CPU coverage successfully. The manual CUDA
+   workflow requires a runner labelled `self-hosted`, `linux`,
    `x64`, `cuda-inference`; repository variables `INFERENCE_CUDA_COMPANION_ROOT`
    and `INFERENCE_CUDA_PYTHON`; and optionally
    `INFERENCE_CUDA_GOVERNANCE_PYTHON`. See
    [CUDA runner setup](docs/deployment/cuda-runner.md).
 7. **Known issues.** Runner registration, runner dependencies, companion checkouts,
    and Actions variables require repository-owner setup. CUDA remains unverified.
-8. **Acceptance criteria.** Local CPU/MPS package behavior is verified. CI wiring
-   is implemented but unexecuted remotely. CUDA and browser integration on CUDA
-   remain unverified pending publication and runner setup.
+8. **Acceptance criteria.** Local CPU/MPS behavior and the pushed PyTorch CI job
+   are verified. The Docker fix and its CI rerun are unverified. CUDA and browser
+   integration on CUDA remain unverified pending default-branch workflow setup and
+   runner registration.
 9. **Next milestone.** Provision/register the documented runner and variables, then
    manually dispatch **CUDA acceptance** on `integration/research-platform`.
 
