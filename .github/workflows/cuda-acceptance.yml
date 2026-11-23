@@ -1,0 +1,34 @@
+name: CUDA acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cuda:
+    if: github.ref == 'refs/heads/integration/research-platform'
+    runs-on: [self-hosted, linux, x64, cuda-inference]
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: inference
+      - name: Connect pinned companion checkouts provisioned by the runner
+        env:
+          COMPANION_ROOT: ${{ vars.INFERENCE_CUDA_COMPANION_ROOT }}
+        run: |
+          test -n "$COMPANION_ROOT"
+          test -d "$COMPANION_ROOT/medical_imaging_model"
+          test -d "$COMPANION_ROOT/MLOps-and-model-governance"
+          ln -sfnT "$COMPANION_ROOT/medical_imaging_model" medical_imaging_model
+          ln -sfnT "$COMPANION_ROOT/MLOps-and-model-governance" MLOps-and-model-governance
+      - name: Run CUDA acceptance
+        env:
+          INFERENCE_BROWSER_PYTHON: ${{ vars.INFERENCE_CUDA_PYTHON }}
+          INFERENCE_BROWSER_GOVERNANCE_PYTHON: ${{ vars.INFERENCE_CUDA_GOVERNANCE_PYTHON }}
+        run: bash inference/scripts/check_cuda_acceptance.sh

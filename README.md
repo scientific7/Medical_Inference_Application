@@ -36,6 +36,7 @@ and Streamlit with local SQLite history by default. See the
 ## Documentation
 
 - [System architecture](docs/architecture/system-architecture.md)
+- [Local platform integration audit](docs/architecture/local-platform-integration-audit.md)
 - [Model and dataset integration](docs/INTEGRATION.md)
 - [API reference](docs/api/api-reference.md)
 - [AWS deployment and rollback](docs/deployment/aws-deployment.md)

@@ -2,13 +2,14 @@
 
 import io
 import json
+import os
 from datetime import datetime, time, timedelta, timezone
 from urllib.parse import quote
 
 import streamlit as st
 from client import API, APIError, model_path
 from PIL import Image
-from visualizations import annotated_image, mask_images
+from visualizations import annotated_image, mask_images, mask_png
 
 from medical_imaging_inference.evaluations import comparison_key
 
@@ -47,6 +48,10 @@ def overview(api):
         ),
     ):
         column.metric(label, value)
+    percentiles = metrics.get("latency_percentiles_ms", {})
+    for column, name in zip(st.columns(3), ("p50", "p95", "p99")):
+        value = percentiles.get(name)
+        column.metric(f"{name.upper()} latency", "—" if value is None else f"{value:.1f} ms")
     if metrics["daily_requests"]:
         st.line_chart(metrics["daily_requests"], x="day", y="count")
         st.bar_chart(metrics["tasks"], x="task", y="count")
@@ -74,7 +79,9 @@ def overview(api):
 
 
 def registry(api):
-    rows = api.request("/api/v1/models")["items"]
+    include_candidates = st.checkbox("Show unapproved catalogue entries")
+    params = {} if include_candidates else {"approved": "true"}
+    rows = api.request("/api/v1/models", params=params)["items"]
     for column, field in zip(st.columns(5), ("task", "framework", "architecture", "version", "approved")):
         values = sorted({row[field] for row in rows if row.get(field) is not None})
         chosen = column.selectbox(
@@ -89,6 +96,11 @@ def registry(api):
         )
         model_id, version = model_path(selected).split("/")
         st.json(api.request(f"/api/v1/models/{model_id}/versions/{version}"))
+        if selected["approved"] and st.button("View verified model card"):
+            card = api.request(f"/api/v1/models/{model_id}/versions/{version}/card")
+            st.write("Supported formats", ", ".join(card["formats"]))
+            st.text(card["card"])
+            st.json(card["preprocessing"])
 
 
 def choose_model(api, task=None):
@@ -146,6 +158,15 @@ def show_prediction(image, result):
         ):
             column.image(view, caption=label)
         st.write("Classes", output["class_labels"] or output["mask_values"])
+        png = mask_png(image.size, output)
+        if png is not None:
+            st.download_button(
+                "Download class mask",
+                png,
+                file_name=f"{result['prediction_id']}-mask.png",
+                mime="image/png",
+                on_click="ignore",
+            )
     else:
         annotated, rows = annotated_image(image, output)
         left, right = st.columns(2)
@@ -224,13 +245,18 @@ def inference(api):
 
 
 def history(api):
-    left, middle, right = st.columns(3)
+    left, version, middle, right = st.columns(4)
     model_id = left.text_input("Model ID")
+    model_version = version.text_input("Model version")
     task = middle.selectbox("Task", ("", *TASKS))
     status = right.selectbox("Status", ("", "completed", "failed"))
     dates = st.date_input("Date range (UTC)", value=())
     filters = {
-        key: value for key, value in dict(model_id=model_id, task=task, status=status).items() if value
+        key: value
+        for key, value in dict(
+            model_id=model_id, model_version=model_version, task=task, status=status
+        ).items()
+        if value
     }
     if len(dates) == 2:
         filters["start"] = datetime.combine(dates[0], time.min, timezone.utc).isoformat()
@@ -297,7 +323,10 @@ def clear_batch():
 token = st.sidebar.text_input("OIDC access token", type="password", on_change=clear_batch)
 st.title(page)
 st.caption("For research use only. Results must not be used as a diagnosis.")
-if token:
+local_research = os.getenv("INFERENCE_RESEARCH_UI") == "1"
+if local_research:
+    st.sidebar.caption("Local research identity")
+if token or local_research:
     try:
         dict(zip(PAGES, (overview, registry, deployment, inference, history, evaluation, administration)))[
             page

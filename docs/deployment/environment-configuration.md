@@ -12,7 +12,8 @@
 | `INFERENCE_ARTIFACT_ROOT` | Private package mount for local approved artifacts. |
 | `INFERENCE_DATABASE_URL` | PostgreSQL URL using the psycopg driver. |
 | `INFERENCE_DATABASE_PATH` | Development SQLite file path. |
-| `INFERENCE_DEVICE` | `cpu` or `gpu`. Defaults to CPU. |
+| `INFERENCE_DEVICE` | `cpu` (default) or `gpu`. PyTorch additionally accepts `cuda` and `mps`. |
+| `INFERENCE_DEADLINE_SECONDS` | Prediction handler deadline covering slot wait and inference, default `30`, valid range `(0, 300]`. Expiry returns HTTP 504 and records a failed prediction. An in-flight native framework call cannot be force-cancelled; it retains a concurrency slot until it ends. Applies per batch item. Multipart parsing and audit persistence are outside the deadline. |
 | `INFERENCE_DISPLAY_TEST_METRICS` | Set to `true` only when approved test metrics may be displayed. |
 | `INFERENCE_API_URL` | Backend origin used by Streamlit. |
 

@@ -139,13 +139,19 @@ def history(
     offset: int,
     task: str | None = None,
     model_id: str | None = None,
+    model_version: str | None = None,
     status: str | None = None,
     start: datetime | None = None,
     end: datetime | None = None,
 ) -> list[dict]:
     clauses = ["(? OR actor=?)"]
     values: list[Any] = [admin, actor]
-    for field, value in (("task", task), ("model_id", model_id), ("status", status)):
+    for field, value in (
+        ("task", task),
+        ("model_id", model_id),
+        ("model_version", model_version),
+        ("status", status),
+    ):
         if value is not None:
             clauses.append(f"{field}=?")
             values.append(value)
@@ -172,6 +178,18 @@ def metrics(actor: str, *, admin: bool) -> dict:
             FROM prediction_records WHERE (? OR actor=?)""",
             (admin, actor),
         ).fetchone()
+        percentiles = db.execute(
+            """WITH ranked AS (
+                SELECT latency_ms, ROW_NUMBER() OVER (ORDER BY latency_ms) AS position,
+                       COUNT(*) OVER () AS sample_count
+                FROM prediction_records WHERE status='completed' AND (? OR actor=?)
+            )
+            SELECT MIN(CASE WHEN position * 100 >= sample_count * 50 THEN latency_ms END) AS p50,
+                   MIN(CASE WHEN position * 100 >= sample_count * 95 THEN latency_ms END) AS p95,
+                   MIN(CASE WHEN position * 100 >= sample_count * 99 THEN latency_ms END) AS p99
+            FROM ranked""",
+            (admin, actor),
+        ).fetchone()
         tasks = db.execute(
             """SELECT COALESCE(task, 'unknown') AS task, COUNT(*) AS count
             FROM prediction_records WHERE (? OR actor=?) GROUP BY COALESCE(task, 'unknown')""",
@@ -184,6 +202,7 @@ def metrics(actor: str, *, admin: bool) -> dict:
         ).fetchall()
     return {
         **dict(totals),
+        "latency_percentiles_ms": dict(percentiles),
         "tasks": [dict(row) for row in tasks],
         "daily_requests": [dict(row) for row in reversed(activity)],
     }

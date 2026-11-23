@@ -1,24 +1,40 @@
 """Render prediction metadata against the image in the current session."""
 
+import io
+
 import numpy as np
 from PIL import Image, ImageDraw
 
 PALETTE = ((0, 0, 0), (68, 210, 177), (248, 174, 76), (158, 133, 255))
 
 
-def mask_images(original: Image.Image, output: dict):
+def decode_mask(size: tuple[int, int], output: dict):
     height, width = output["mask_shape"]
-    if (width, height) != original.size:
+    if (width, height) != size:
         raise ValueError("Mask dimensions differ from the source image")
     classes, lengths = np.asarray(output["mask_runs"], dtype=np.int64).T
     if (lengths < 1).any() or (classes < 0).any() or lengths.sum() != height * width:
         raise ValueError("Invalid mask encoding")
-    mask = np.repeat(classes, lengths).reshape(height, width)
+    return np.repeat(classes, lengths).reshape(height, width)
+
+
+def mask_images(original: Image.Image, output: dict):
+    mask = decode_mask(original.size, output)
     pixels = np.asarray(PALETTE, dtype=np.uint8)[mask % len(PALETTE)]
     overlay = np.array(original.convert("RGB"))
     foreground = mask != 0
     overlay[foreground] = overlay[foreground] * 0.5 + pixels[foreground] * 0.5
     return Image.fromarray(pixels), Image.fromarray(overlay)
+
+
+def mask_png(size: tuple[int, int], output: dict) -> bytes | None:
+    """Encode integer class IDs without applying the display palette."""
+    if max(output["mask_values"]) > 65535:
+        return None
+    mask = decode_mask(size, output)
+    buffer = io.BytesIO()
+    Image.fromarray(mask.astype("<u2")).save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def annotated_image(original: Image.Image, output: dict):

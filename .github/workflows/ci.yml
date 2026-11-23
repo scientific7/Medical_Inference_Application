@@ -74,7 +74,27 @@ jobs:
           python-version: "3.10"
           cache: pip
       - run: python -m pip install -e '.[test,postgres,aws]'
-      - run: python -m pytest -q tests/test_batches.py tests/test_datasets.py tests/test_evaluations.py tests/test_history.py tests/test_http_limits.py tests/test_postgres.py tests/test_registry.py
+      - run: python -m pytest -q tests/test_batches.py tests/test_deadlines.py tests/test_datasets.py tests/test_evaluations.py tests/test_history.py tests/test_http_limits.py tests/test_postgres.py tests/test_registry.py
+
+  framework-smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - framework: pytorch
+            module: torch
+          - framework: tensorflow
+            module: tensorflow
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: python -m pip install -e '.[test,${{ matrix.framework }}]'
+      - run: python -c 'import ${{ matrix.module }}'
+      - run: python -m pytest -q tests/test_local_lifecycle.py -k '${{ matrix.framework }}'
+      - if: matrix.framework == 'pytorch'
+        run: python -m pytest -q tests/test_runtime.py
 
   frontend:
     runs-on: ubuntu-latest

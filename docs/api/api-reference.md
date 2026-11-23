@@ -13,7 +13,7 @@ All routes except health and readiness require an OIDC bearer token.
 | POST | `/api/v1/predictions/{model_id}/{version}` | Run inference with the multipart field `image` |
 | POST | `/api/v1/inference/batch` | Queue multipart fields `model_id`, `version`, and repeated `images` |
 | GET | `/api/v1/inference/batch/{batch_id}` | Job state and individual request IDs |
-| GET | `/api/v1/inference/history` | Paginated summaries filtered by task, model, state, and date |
+| GET | `/api/v1/inference/history` | Paginated summaries filtered by task, model, version, state, and date |
 | GET | `/api/v1/inference/history/{prediction_id}` | Detailed prediction metadata |
 | GET | `/api/v1/evaluations` | Evaluation summaries enabled for display |
 | GET | `/api/v1/system/metrics` | Requester-scoped counts and latency, with system-wide access for administrators |
@@ -28,4 +28,7 @@ Classification scores are labeled as uncalibrated.
 The API uses FastAPI's `detail` error envelope. Handled prediction failures
 include an `X-Request-ID` response header. Oversized requests return 413,
 unsupported media return 415, and invalid images return 422. Registry
-and runtime availability failures return 503.
+and runtime availability failures return 503. The configured end-to-end
+prediction deadline returns 504 and persists a failed request record. Native
+framework work already running in a worker cannot be force-cancelled, so it
+continues to hold a concurrency slot until it exits.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
+import math
 import os
 import time
 import uuid
@@ -25,7 +26,7 @@ from .postprocessing import interpret as _interpret
 from .preprocessing import InvalidImage
 from .registry import ModelSelection, RegistryUnavailable, approval, catalogue
 from .runtime import ModelCache
-from .security import authorize, authorize_researcher
+from .security import authorize, authorize_researcher, verified_package
 from .storage import artifact_store_status
 from .telemetry import inference_event
 
@@ -39,6 +40,65 @@ MAX_BATCH_BYTES = 40 * 1024 * 1024
 app.add_middleware(UploadLimits, image_bytes=MAX_IMAGE_BYTES, batch_bytes=MAX_BATCH_BYTES)
 INFERENCE_CONCURRENCY = 2
 inference_slots = asyncio.Semaphore(INFERENCE_CONCURRENCY)
+
+
+def _configured_deadline_seconds() -> float:
+    raw = os.getenv("INFERENCE_DEADLINE_SECONDS", "30")
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise HTTPException(503, "INFERENCE_DEADLINE_SECONDS must be numeric") from exc
+    if not math.isfinite(value) or value <= 0 or value > 300:
+        raise HTTPException(503, "INFERENCE_DEADLINE_SECONDS must be greater than zero and at most 300")
+    return value
+
+
+_running_predictions: set[asyncio.Task] = set()
+
+
+def _deadline_check(deadline: float) -> None:
+    if time.perf_counter() >= deadline:
+        raise asyncio.TimeoutError
+
+
+def _prediction_finished(task: asyncio.Task) -> None:
+    _running_predictions.discard(task)
+    if not task.cancelled():
+        task.exception()
+
+
+async def _bounded_prediction(
+    prediction: dict, model_id: str, version: str, image: UploadFile, started: float, timeout_seconds: float
+) -> bytes:
+    deadline = started + timeout_seconds
+    content = await image.read(MAX_IMAGE_BYTES + 1)
+    filename, media_type = image.filename or "", image.content_type or ""
+    slots = inference_slots
+    try:
+        await asyncio.wait_for(slots.acquire(), timeout=deadline - time.perf_counter())
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(504, "Inference deadline exceeded while waiting for an execution slot") from exc
+
+    work = dict(prediction)
+
+    async def execute():
+        try:
+            await _run_prediction(work, model_id, version, content, filename, media_type, deadline)
+        finally:
+            slots.release()
+
+    worker = asyncio.create_task(execute())
+    _running_predictions.add(worker)
+    worker.add_done_callback(_prediction_finished)
+    try:
+        await asyncio.wait_for(asyncio.shield(worker), timeout=deadline - time.perf_counter())
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(504, "Inference deadline exceeded during model execution") from exc
+    except HTTPException:
+        prediction.update(work)
+        raise
+    prediction.update(work)
+    return content
 
 
 async def _approved_record(model_id: str, version: str) -> dict:
@@ -86,8 +146,8 @@ async def predict(
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     try:
-        async with inference_slots:
-            content = await _run_prediction(prediction, model_id, version, image)
+        deadline_seconds = _configured_deadline_seconds()
+        content = await _bounded_prediction(prediction, model_id, version, image, started, deadline_seconds)
     except HTTPException as exc:
         prediction.update(
             status="failed",
@@ -104,20 +164,29 @@ async def predict(
     return prediction
 
 
-async def _run_prediction(prediction: dict, model_id: str, version: str, image: UploadFile) -> bytes:
-    content = await image.read(MAX_IMAGE_BYTES + 1)
+async def _run_prediction(
+    prediction: dict,
+    model_id: str,
+    version: str,
+    content: bytes,
+    filename: str,
+    media_type: str,
+    deadline: float,
+) -> None:
+    _deadline_check(deadline)
     if len(content) > MAX_IMAGE_BYTES:
         raise HTTPException(413, "Image exceeds the upload size limit")
-    if image.content_type not in {"image/jpeg", "image/png", "image/tiff", "image/webp"}:
+    if media_type not in {"image/jpeg", "image/png", "image/tiff", "image/webp"}:
         raise HTTPException(415, "Unsupported image media type")
     InferenceRequest(
         request_id=prediction["prediction_id"],
         model_id=model_id,
         model_version=version,
         image_sha256=hashlib.sha256(content).hexdigest(),
-        content_type=image.content_type,
+        content_type=media_type,
     )
     record = await _approved_record(model_id, version)
+    _deadline_check(deadline)
     if (
         record.get("state") != "approved"
         or record.get("model_id") != model_id
@@ -147,29 +216,34 @@ async def _run_prediction(prediction: dict, model_id: str, version: str, image: 
         )
     except (ValueError, OSError, KeyError, RuntimeError, ImportError) as exc:
         raise HTTPException(503, "Approved package failed integrity or input contract validation") from exc
+    _deadline_check(deadline)
     try:
         pixels, original_size = await run_in_threadpool(
             spec.transform,
             content,
-            filename=image.filename or "",
-            media_type=image.content_type or "",
+            filename=filename,
+            media_type=media_type,
             max_pixels=MAX_IMAGE_PIXELS,
         )
     except InvalidImage as exc:
         raise HTTPException(422, str(exc)) from exc
+    _deadline_check(deadline)
     try:
-        height, width = spec.image_size
-        raw = await run_in_threadpool(model.run, pixels)
-        output = await run_in_threadpool(
-            _interpret,
-            manifest["task"],
-            raw,
-            manifest["class_mapping"],
-            original_size,
-            (width, height),
-            framework=manifest["framework"],
-            settings=manifest.get("postprocessing"),
-        )
+        width, height = original_size if spec.resize == "native" else spec.image_size[::-1]
+
+        def execute_and_decode():
+            return _interpret(
+                manifest["task"],
+                model.run(pixels),
+                manifest["class_mapping"],
+                original_size,
+                (width, height),
+                framework=manifest["framework"],
+                settings=manifest.get("postprocessing"),
+            )
+
+        output = await run_in_threadpool(execute_and_decode)
+        _deadline_check(deadline)
     except (ValueError, OSError, KeyError, RuntimeError, ImportError) as exc:
         raise HTTPException(503, "Approved model could not execute inference") from exc
     original_width, original_height = original_size
@@ -178,7 +252,14 @@ async def _run_prediction(prediction: dict, model_id: str, version: str, image: 
         input_dimensions={"width": original_width, "height": original_height},
         disclaimer="Model-generated prediction for research; not a diagnosis.",
     )
-    return content
+    prediction["lineage"].update(
+        input_format=media_type,
+        input_dimensions=prediction["input_dimensions"],
+        preprocessing_version=spec.version,
+        application_version=app.version,
+    )
+    if isinstance(record.get("approved_at"), str):
+        prediction["lineage"]["approved_at"] = record["approved_at"]
 
 
 async def _process_batch(batch_id, selection, payloads, user):
@@ -257,6 +338,7 @@ def inference_history(
     offset: int = Query(0, ge=0),
     task: str | None = None,
     model_id: str | None = None,
+    model_version: str | None = None,
     status: str | None = None,
     start: AwareDatetime | None = None,
     end: AwareDatetime | None = None,
@@ -269,6 +351,7 @@ def inference_history(
             offset=offset,
             task=task,
             model_id=model_id,
+            model_version=model_version,
             status=status,
             start=start,
             end=end,
@@ -367,6 +450,31 @@ async def model_details(model_id: str, version: str, _user: dict = Depends(autho
     return {**row, "dataset_publication": await published_release(row)}
 
 
+@app.get("/api/v1/models/{model_id}/versions/{version}/card")
+async def model_card(model_id: str, version: str, _user: dict = Depends(authorize)):
+    record = await _approved_record(model_id, version)
+    try:
+        return await run_in_threadpool(_card_summary, record)
+    except (ValueError, OSError, TypeError) as exc:
+        raise HTTPException(503, "Approved model card is unavailable") from exc
+
+
+def _card_summary(record):
+    import re
+
+    from .preprocessing import PreprocessingSpec
+
+    package, manifest = verified_package(record)
+    with (package / "model_card.md").open(encoding="utf-8") as card:
+        text = card.read(65537)
+    if not text.strip() or len(text) > 65536:
+        raise ValueError("Invalid model card")
+    if os.getenv("INFERENCE_DISPLAY_TEST_METRICS") != "true":
+        text = re.sub(r"(?ms)^## Evaluation summary[ \t]*$.*?(?=^## |\Z)", "", text)
+    spec = PreprocessingSpec.from_manifest(manifest)
+    return {"card": text, "formats": spec.formats, "preprocessing": spec.model_dump()}
+
+
 async def _model_version(model_id: str, version: str, user: dict):
     versions = await model_versions(model_id, user)
     for row in versions["items"]:
@@ -408,6 +516,8 @@ async def system_status(_user: dict = Depends(authorize_admin)):
         if os.getenv("MLFLOW_TRACKING_URI")
         else "local"
         if os.getenv("INFERENCE_LOCAL_CATALOGUE")
+        else "governance"
+        if os.getenv("MLOPS_SERVICE_TOKEN")
         else None
     )
     if catalogue_source:

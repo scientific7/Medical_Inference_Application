@@ -40,6 +40,19 @@ async def approval(model_id: str, version: str) -> dict | None:
             record = response.json()
             if not isinstance(record, dict):
                 raise ValueError("Expected a governance record")
+            if "state" not in record:
+                record = {
+                    **record,
+                    "state": record.get("status"),
+                    "artifact_path": record.get("artifact_uri"),
+                    "artifact_digest": record.get("artifact_sha256"),
+                    "manifest_digest": record.get("model_manifest_sha256"),
+                    "metadata": {
+                        field: record[field]
+                        for field in ("task", "framework", "architecture", "preprocessing", "class_mapping")
+                        if record.get(field) is not None
+                    },
+                }
             if (record.get("state"), record.get("model_id"), record.get("version")) != (
                 "approved",
                 model_id,
@@ -97,6 +110,32 @@ async def mlflow_candidates(base: str) -> list[dict]:
         raise RegistryUnavailable("MLflow catalogue is unavailable") from exc
 
 
+async def governance_candidates() -> list[dict]:
+    base = os.getenv("MLOPS_API_URL", "http://127.0.0.1:8081").rstrip("/")
+    token = os.getenv("MLOPS_SERVICE_TOKEN")
+    if not token:
+        raise RegistryUnavailable("Governance service identity is not configured")
+    candidates = {}
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            for offset in range(0, 10000, 100):
+                response = await client.get(
+                    f"{base}/api/v1/inference/models",
+                    params={"limit": 100, "offset": offset},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                response.raise_for_status()
+                rows = response.json()["items"]
+                for row in rows:
+                    selection = ModelSelection(model_id=row["model_id"], version=row["version"])
+                    candidates[(selection.model_id, selection.version)] = selection.model_dump()
+                if len(rows) < 100:
+                    return list(candidates.values())
+        raise ValueError("Governance catalogue exceeds discovery limit")
+    except (httpx.HTTPError, ValueError, TypeError, KeyError) as exc:
+        raise RegistryUnavailable("Governance catalogue is unavailable") from exc
+
+
 async def catalogue() -> list[dict]:
     base = os.getenv("MLFLOW_TRACKING_URI")
     local = os.getenv("INFERENCE_LOCAL_CATALOGUE")
@@ -109,7 +148,7 @@ async def catalogue() -> list[dict]:
         except (OSError, ValueError, TypeError) as exc:
             raise RegistryUnavailable("Local development catalogue is unavailable") from exc
     else:
-        raise RegistryUnavailable("Model catalogue is not configured")
+        candidates = await governance_candidates()
 
     # Use bounded fan-out and fail visibly if approval cannot be established.
     entries = []
@@ -139,6 +178,8 @@ async def _with_approval(candidate: dict) -> dict:
         ):
             if field in metadata:
                 result[field] = metadata[field]
+        result["limitations"] = metadata.get("known_limitations", record.get("limitations", []))
+        result["intended_use"] = metadata.get("intended_use")
         evaluation = evaluation_record(candidate, metadata)
         if evaluation:
             result["evaluation"] = evaluation

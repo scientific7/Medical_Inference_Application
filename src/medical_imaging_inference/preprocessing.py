@@ -42,8 +42,8 @@ class PreprocessingSpec(BaseModel):
     image_size: tuple[Dimension, Dimension]
     color: Literal["RGB", "BGR"]
     scale: Scale
-    resize: Literal["nearest", "bilinear", "bicubic", "lanczos"]
-    aspect_ratio: Literal["stretch"]
+    resize: Literal["nearest", "bilinear", "bicubic", "lanczos", "torch_bilinear", "native"]
+    aspect_ratio: Literal["stretch", "preserve"]
     orientation: Literal["raw"]
     channel_order: Literal["CHW", "HWC"]
     formats: Annotated[tuple[ImageFormat, ...], Field(min_length=1)]
@@ -86,6 +86,17 @@ class PreprocessingSpec(BaseModel):
         spec = cls.model_validate(source)
         if spec.channel_order != order:
             raise ValueError("Tensor layout is incompatible with the framework adapter")
+        if spec.resize == "torch_bilinear" and manifest["framework"] != "pytorch":
+            raise ValueError("Torch bilinear resizing requires the PyTorch adapter")
+        native_detector = (
+            manifest["framework"] == "pytorch"
+            and manifest.get("task") == "detection"
+            and manifest.get("runtime_output") == "torchvision_detection_tuple"
+        )
+        if (spec.resize == "native") != native_detector or (
+            spec.aspect_ratio == "preserve"
+        ) != native_detector:
+            raise ValueError("Torchvision detection exports require native image dimensions")
         return spec
 
     def transform(
@@ -111,8 +122,10 @@ class PreprocessingSpec(BaseModel):
                 image.verify()
             with Image.open(io.BytesIO(content), formats=list(self.formats)) as image:
                 height, width = self.image_size
-                resized = image.convert("RGB").resize((width, height), RESAMPLING[self.resize])
-                values = np.array(resized, dtype=np.float32)
+                rgb = image.convert("RGB")
+                if self.resize not in {"torch_bilinear", "native"}:
+                    rgb = rgb.resize((width, height), RESAMPLING[self.resize])
+                values = np.array(rgb, dtype=np.float32)
         except (OSError, Image.DecompressionBombError) as exc:
             raise InvalidImage("Image is malformed, unreadable or unsupported by the model") from exc
 
@@ -120,6 +133,17 @@ class PreprocessingSpec(BaseModel):
             values = values[..., ::-1]
         if self.scale == "[0,1]":
             values = values / np.float32(255)
+        if self.resize == "torch_bilinear":
+            import torch
+
+            tensor = torch.from_numpy(np.ascontiguousarray(values.transpose(2, 0, 1)))
+            values = (
+                torch.nn.functional.interpolate(
+                    tensor[None], size=self.image_size, mode="bilinear", align_corners=False
+                )[0]
+                .permute(1, 2, 0)
+                .numpy()
+            )
         if self.mean is not None and self.std is not None:
             values = (values - np.asarray(self.mean, dtype=np.float32)) / np.asarray(
                 self.std, dtype=np.float32

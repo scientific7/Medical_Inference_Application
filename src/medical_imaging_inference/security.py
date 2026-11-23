@@ -79,7 +79,16 @@ def verify_directory(package: Path, record: dict) -> dict:
     manifest_path = package / "model_manifest.json"
     if not manifest_path.is_file():
         raise ValueError("Approved package is missing its manifest")
+    if record.get("manifest_digest") and file_digest(manifest_path) != record["manifest_digest"]:
+        raise ValueError("Approved manifest checksum mismatch")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for field in ("model_id", "version"):
+        if field in manifest and manifest[field] != record.get(field):
+            raise ValueError("Manifest model identity differs from approval")
+    for field in ("task", "architecture", "framework", "preprocessing", "class_mapping"):
+        approved = record.get("metadata", {}).get(field)
+        if approved is not None and manifest.get(field) != approved:
+            raise ValueError("Manifest metadata differs from approval")
     ref = manifest.get("weights", {})
     weights = (package / ref.get("path", "")).resolve()
     if package not in weights.parents or not weights.is_file():

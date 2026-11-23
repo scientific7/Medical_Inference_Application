@@ -10,3 +10,10 @@ reports failed host status checks. The ALB monitors frontend health.
 Operational metrics describe application availability. Estimating model
 performance on the deployment population requires appropriate ground-truth
 labels.
+
+Overview shows nearest-rank P50, P95, and P99 of completed prediction
+latencies within the same history access scope as the other aggregates.
+Empty scopes show no percentile value. Deployment and System administration
+show `load_ms` for currently cached exports. This measures package retrieval
+and integrity checks plus framework loading on a cache miss. Cache hits keep
+the original measurement. Unloading or restarting clears it.

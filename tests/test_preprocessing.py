@@ -81,3 +81,74 @@ def test_invalid_bytes(manifest):
             media_type="image/png",
             max_pixels=12,
         )
+
+
+def test_torch_bilinear_matches_yolo_reader_on_nonuniform_image():
+    torch = pytest.importorskip("torch")
+    arr = np.arange(5 * 7 * 3, dtype=np.uint8).reshape(5, 7, 3)
+    content = io.BytesIO()
+    Image.fromarray(arr).save(content, format="PNG")
+    spec = PreprocessingSpec.from_manifest(
+        {
+            "framework": "pytorch",
+            "task": "detection",
+            "preprocessing": {
+                "version": "1",
+                "image_size": [2, 3],
+                "color": "RGB",
+                "scale": "[0,1]",
+                "resize": "torch_bilinear",
+                "aspect_ratio": "stretch",
+                "orientation": "raw",
+                "channel_order": "CHW",
+                "formats": ["PNG"],
+            },
+        }
+    )
+    expected = torch.nn.functional.interpolate(
+        torch.tensor(arr).permute(2, 0, 1)[None].float() / 255,
+        size=(2, 3),
+        mode="bilinear",
+        align_corners=False,
+    )[0]
+    actual, size = spec.transform(
+        content.getvalue(),
+        filename="sample.png",
+        media_type="image/png",
+        max_pixels=35,
+    )
+    np.testing.assert_array_equal(actual, expected.numpy())
+    assert size == (7, 5)
+
+
+def test_faster_rcnn_keeps_native_dimensions():
+    manifest = {
+        "framework": "pytorch",
+        "task": "detection",
+        "runtime_output": "torchvision_detection_tuple",
+        "preprocessing": {
+            "version": "1",
+            "image_size": [32, 32],
+            "color": "RGB",
+            "scale": "[0,1]",
+            "resize": "native",
+            "aspect_ratio": "preserve",
+            "orientation": "raw",
+            "channel_order": "CHW",
+            "formats": ["PNG"],
+        },
+    }
+    image = io.BytesIO()
+    Image.new("RGB", (9, 5), (255, 0, 0)).save(image, format="PNG")
+    pixels, size = PreprocessingSpec.from_manifest(manifest).transform(
+        image.getvalue(),
+        filename="image.png",
+        media_type="image/png",
+        max_pixels=45,
+    )
+    assert size == (9, 5)
+    assert pixels.shape == (3, 5, 9)
+    np.testing.assert_array_equal(pixels[:, 0, 0], [1, 0, 0])
+    manifest["preprocessing"]["aspect_ratio"] = "stretch"
+    with pytest.raises(ValueError, match="native image dimensions"):
+        PreprocessingSpec.from_manifest(manifest)

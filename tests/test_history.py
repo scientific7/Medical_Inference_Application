@@ -59,3 +59,35 @@ def test_existing_sqlite_records_remain_readable(tmp_path, monkeypatch):
     assert result["output"] == {}
     assert result["task"] is None
     assert audit.metrics("owner", admin=False)["tasks"] == [{"task": "unknown", "count": 1}]
+
+
+def test_latency_percentiles_use_completed_requests_and_actor_scope(tmp_path, monkeypatch):
+    monkeypatch.setenv("INFERENCE_DATABASE_PATH", str(tmp_path / "percentiles.sqlite3"))
+    for index, (actor, status, latency) in enumerate(
+        [
+            ("owner", "completed", 10),
+            ("owner", "completed", 30),
+            ("owner", "completed", 20),
+            ("owner", "failed", 1000),
+            ("other", "completed", 100),
+        ]
+    ):
+        audit.record_prediction(
+            {
+                "prediction_id": str(index),
+                "model_id": "model",
+                "model_version": "1",
+                "status": status,
+                "latency_ms": latency,
+                "created_at": "2026-01-01T00:00:00+00:00",
+            },
+            None,
+            actor,
+        )
+    assert audit.metrics("owner", admin=False)["latency_percentiles_ms"] == {
+        "p50": 20,
+        "p95": 30,
+        "p99": 30,
+    }
+    assert audit.metrics("owner", admin=True)["latency_percentiles_ms"]["p99"] == 100
+    assert audit.metrics("missing", admin=False)["latency_percentiles_ms"]["p50"] is None

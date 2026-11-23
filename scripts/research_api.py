@@ -7,6 +7,7 @@ import uvicorn
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("service", choices=("mlops", "inference"))
+parser.add_argument("--port", type=int)
 args = parser.parse_args()
 if os.getenv("ENVIRONMENT") == "production" or os.getenv("INFERENCE_ENVIRONMENT") == "production":
     parser.error("Research identities are forbidden in production")
@@ -37,4 +38,4 @@ else:
     app.dependency_overrides[authorize] = researcher
     port = 8082
 
-uvicorn.run(app, host="127.0.0.1", port=port, proxy_headers=False)
+uvicorn.run(app, host="127.0.0.1", port=args.port or port, proxy_headers=False)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,26 +29,45 @@ def load_export(package: Path, manifest: dict) -> LoadedModel:
     spec = PreprocessingSpec.from_manifest(manifest)
     OutputSettings.model_validate(manifest.get("postprocessing", {}))
     device = os.getenv("INFERENCE_DEVICE", "cpu")
-    if device not in {"cpu", "gpu"}:
-        raise ValueError("INFERENCE_DEVICE must be cpu or gpu")
+    if device not in {"cpu", "gpu", "cuda", "mps"}:
+        raise ValueError("INFERENCE_DEVICE must be cpu, gpu, cuda, or mps")
     if manifest["framework"] == "pytorch":
         import torch
 
-        if device == "gpu" and not torch.cuda.is_available():
+        if device in {"gpu", "cuda"} and not torch.cuda.is_available():
             raise ValueError("PyTorch GPU execution is unavailable")
-        target = "cuda:0" if device == "gpu" else "cpu"
+        if device == "mps" and not torch.backends.mps.is_available():
+            raise ValueError("PyTorch MPS execution is unavailable")
+        target = "cuda:0" if device in {"gpu", "cuda"} else device
         export = package / "inference_model.ts"
         if not export.is_file():
             raise ValueError("Missing TorchScript export")
-        model = torch.jit.load(str(export), map_location=target).eval()
+        torchvision_output = manifest.get("runtime_output") == "torchvision_detection_tuple"
+        if torchvision_output and device == "mps":
+            raise ValueError("Torchvision scripted detection is not supported on MPS")
+        if torchvision_output:
+            # Register Torchvision's custom operators before loading the script.
+            import torchvision  # noqa: F401
+
+        model = torch.jit.load(str(export), map_location="cpu" if device == "mps" else target)
+        model = model.to(target).eval()
 
         def run(pixels):
             with torch.inference_mode():
-                return model(torch.from_numpy(pixels).unsqueeze(0).to(target))
+                tensor = torch.from_numpy(pixels).to(target)
+                if torchvision_output:
+                    _, detections = model([tensor])
+                    return detections
+                output = model(tensor.unsqueeze(0))
+                if manifest.get("runtime_output") == "batched_detection_dict":
+                    return {key: output[key][0] for key in ("boxes", "labels", "scores")}
+                return output
 
     else:
         import tensorflow as tf
 
+        if device in {"cuda", "mps"}:
+            raise ValueError("TensorFlow requires cpu or gpu device selection")
         if device == "gpu" and not tf.config.list_logical_devices("GPU"):
             raise ValueError("TensorFlow GPU execution is unavailable")
         target = "/GPU:0" if device == "gpu" else "/CPU:0"
@@ -66,7 +86,7 @@ def load_export(package: Path, manifest: dict) -> LoadedModel:
             (output,) = outputs.values()
             return output
 
-    return LoadedModel(manifest, spec, device, run)
+    return LoadedModel(manifest, spec, target, run)
 
 
 class ModelCache:
@@ -75,6 +95,7 @@ class ModelCache:
             raise ValueError("Model cache capacity must be positive")
         self.capacity = capacity
         self._lock = Lock()
+        self._load_ms: dict[tuple[str, str, str], float] = {}
         self._models: OrderedDict[tuple[str, str, str], LoadedModel] = OrderedDict()
 
     def get(self, record: dict) -> LoadedModel:
@@ -83,10 +104,13 @@ class ModelCache:
         key = (record["model_id"], record["version"], record["artifact_digest"])
         with self._lock:
             if key not in self._models:
+                started = time.perf_counter()
                 package, manifest = verified_package(record)
                 self._models[key] = load_export(package, manifest)
+                self._load_ms[key] = (time.perf_counter() - started) * 1000
                 if len(self._models) > self.capacity:
-                    self._models.popitem(last=False)
+                    evicted, _ = self._models.popitem(last=False)
+                    del self._load_ms[evicted]
             self._models.move_to_end(key)
             return self._models[key]
 
@@ -95,11 +119,18 @@ class ModelCache:
             matches = [key for key in self._models if key[:2] == (model_id, version)]
             for key in matches:
                 del self._models[key]
+                del self._load_ms[key]
             return bool(matches)
 
     def active(self) -> list[dict]:
         with self._lock:
             return [
-                {"model_id": key[0], "version": key[1], "device": model.device, "integrity": "verified"}
+                {
+                    "model_id": key[0],
+                    "version": key[1],
+                    "device": model.device,
+                    "integrity": "verified",
+                    "load_ms": self._load_ms[key],
+                }
                 for key, model in self._models.items()
             ]

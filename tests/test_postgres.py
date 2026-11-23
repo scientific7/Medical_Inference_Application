@@ -35,7 +35,9 @@ def test_postgresql_history_contract(monkeypatch):
         assert audit.get_prediction(prediction_id, "different") is None
         assert audit.get_prediction(prediction_id, actor)["output"] == {"predicted_class": "example"}
         assert audit.history(actor, admin=False, limit=10, offset=0)[0]["prediction_id"] == prediction_id
-        assert audit.metrics(actor, admin=False)["average_latency_ms"] == 5
+        metrics = audit.metrics(actor, admin=False)
+        assert metrics["average_latency_ms"] == 5
+        assert metrics["latency_percentiles_ms"] == {"p50": 5, "p95": 5, "p99": 5}
     finally:
         with audit.connect() as db:
             db.execute("DELETE FROM prediction_records WHERE prediction_id=?", (prediction_id,))

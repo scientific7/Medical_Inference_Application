@@ -1,5 +1,8 @@
 # Connected research platform
 
+For the audited local target architecture, verified gaps, and phased acceptance
+criteria, see the [local platform integration audit](../architecture/local-platform-integration-audit.md).
+
 The four repositories have distinct ownership: Dataset Pipeline publishes
 datasets; Model Engineering trains and exports; MLOps registers and reviews;
 Inference runs an approved version. Shared schemas are packaged in this
@@ -58,3 +61,56 @@ This local test does not certify clinical performance, historical dataset
 review, production SSO, hosted GUI availability or AWS scale. Live institutional
 OIDC, DNS/TLS and resource sizing are deployment configuration. Research use
 alone does not supply those values.
+
+Inference uses Layer 3's approved model catalogue when neither MLflow nor a
+local catalogue file is configured. The loopback launcher opens the inference
+workstation with its local research identity. Model Explorer can retrieve
+cards from verified approved packages and show their supported image formats.
+
+## Live workstation acceptance
+
+`tests/test_loopback_workstation.py` starts separate governance, inference,
+and Streamlit processes with temporary SQLite databases and package storage.
+It drives Chrome through upload, visualization, mask download, and history.
+Install Playwright in the test environment and have Chrome installed.
+Set `INFERENCE_BROWSER_PYTHON` to a Python 3.10 interpreter with inference,
+Streamlit, and PyTorch installed. Set `INFERENCE_BROWSER_GOVERNANCE_PYTHON`
+to the governance interpreter if its dependencies are in a separate
+environment. The pytest interpreter also needs PyTorch and the Model
+Engineering package on its import path.
+
+```bash
+INFERENCE_BROWSER_PYTHON="$PWD/.venv310/bin/python" \
+INFERENCE_BROWSER_GOVERNANCE_PYTHON="$PWD/../MLOps-and-model-governance/.venv310/bin/python" \
+python -m pytest -q tests/test_loopback_workstation.py
+```
+
+The detection fixture uses Model Engineering's actual YOLO-grid exporter
+with deterministic synthetic weights. The producer checks eager-versus-reloaded
+TorchScript parity, and the workstation verifies governance approval and
+original-image coordinates. The Faster R-CNN fixture also uses the Model Engineering exporter. It
+preserves native image sizes and validates two uploads with different
+detection counts against the eager model. The runtime requires Torchvision
+in addition to PyTorch. RetinaNet and DETR exports remain outside this
+verified handoff.
+
+### CUDA acceptance
+
+Run `bash scripts/check_cuda_acceptance.sh` on a Linux host with an NVIDIA
+CUDA device. Set `INFERENCE_BROWSER_PYTHON` to an environment with CUDA-enabled
+PyTorch and Torchvision, inference and test dependencies, and Playwright.
+Install Chrome and provision the companion Model Engineering and governance
+checkouts. Set `INFERENCE_BROWSER_GOVERNANCE_PYTHON` if governance uses a
+separate interpreter. The preflight requires GPU availability, CUDA NMS and
+Chrome before it runs the TorchScript device tests and governed browser flow.
+The browser test compares saved Faster R-CNN output with eager CUDA output
+and checks that history reports `cuda:0`.
+
+The manual GitHub Actions job targets a trusted self-hosted Linux x64 runner
+labelled `cuda-inference`. Configure repository variables
+`INFERENCE_CUDA_PYTHON` and `INFERENCE_CUDA_COMPANION_ROOT` with absolute paths.
+The companion root must contain compatible, pinned checkouts of
+`medical_imaging_model` and `MLOps-and-model-governance`.
+Set `INFERENCE_CUDA_GOVERNANCE_PYTHON` for a separate governance environment.
+The workflow must be available on the repository's default branch before
+GitHub can dispatch it against `integration/research-platform`.

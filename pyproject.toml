@@ -17,7 +17,7 @@ test = ["pytest==8.4.2"]
 postgres = ["psycopg[binary]>=3.2,<4"]
 aws = ["boto3>=1.35,<2"]
 frontend = ["streamlit==1.49.1"]
-pytorch = ["torch==2.5.1"]
+pytorch = ["torch==2.5.1", "torchvision==0.20.1"]
 tensorflow = ["tensorflow==2.18.0"]
 
 [tool.setuptools.packages.find]

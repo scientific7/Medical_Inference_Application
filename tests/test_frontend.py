@@ -20,6 +20,7 @@ def test_dashboard_overview_uses_backend_records(monkeypatch):
                 "successful": 3,
                 "failed": 1,
                 "average_latency_ms": 12,
+                "latency_percentiles_ms": {"p50": 10, "p95": 14, "p99": 16},
                 "daily_requests": [],
                 "tasks": [],
             },
@@ -38,3 +39,4 @@ def test_dashboard_overview_uses_backend_records(monkeypatch):
     assert not app.exception
     assert {metric.label: metric.value for metric in app.metric}["Requests"] == "4"
     assert "/api/v1/models" in calls
+    assert {metric.label: metric.value for metric in app.metric}["P95 latency"] == "14.0 ms"
