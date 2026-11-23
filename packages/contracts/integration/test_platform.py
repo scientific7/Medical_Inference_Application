@@ -140,8 +140,13 @@ def test_train_approve_predict(tmp_path, monkeypatch, framework):
                 "framework": framework, "architecture": config.architecture, "task": "classification",
                 "preprocessing": {"image_size": [8, 8], "color": "RGB", "scale": "[0,1]"},
                 "class_mapping": release.label_mapping, "config_digest": config.digest(),
-                "evaluation_summary": {"validation_loss": result["history"][-1][
-                    "validation_loss" if framework == "pytorch" else "val_loss"]}}
+                "evaluation_summary": {
+                    "validation_loss": result["history"][-1][
+                        "validation_loss" if framework == "pytorch" else "val_loss"],
+                    "accuracy": float(result["history"][-1].get(
+                        "validation_accuracy" if framework == "pytorch" else "val_accuracy", 0.5)),
+                    "macro_f1": float(result["history"][-1].get("validation_macro_f1", 0.5)),
+                }}
     artifacts = tmp_path / "artifacts"
     package = artifacts / "candidate"
     write_model_package(package, metadata, result["best_checkpoint"])
