@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from medical_imaging_contracts.models import InferenceRequest
 from pydantic import AwareDatetime
 from sqlalchemy.exc import SQLAlchemyError
@@ -25,7 +26,14 @@ from .datasets import published_release
 from .http_limits import UploadLimits
 from .postprocessing import interpret as _interpret
 from .preprocessing import InvalidImage
-from .registry import ModelSelection, RegistryUnavailable, approval, catalogue, catalogue_source_name
+from .registry import (
+    ModelSelection,
+    RegistryUnavailable,
+    approval,
+    catalogue,
+    catalogue_source_name,
+    experimental_mode_enabled,
+)
 from .runtime import ModelCache
 from .security import authorize, authorize_researcher, verified_package
 from .storage import artifact_store_status
@@ -164,6 +172,11 @@ async def _approved_record(model_id: str, version: str) -> dict:
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "medical-imaging-inference", "version": app.version}
+
+
+@app.get("/live")
+def liveness():
+    return {"status": "alive", "service": "medical-imaging-inference", "version": app.version}
 
 
 @app.get("/ready")
@@ -446,6 +459,148 @@ def system_metrics(user: dict = Depends(authorize)):
     }
 
 
+def _visualization_metadata(task: str | None, output: dict | None) -> dict:
+    if not isinstance(output, dict) or not task:
+        return {"type": "none"}
+    if task == "classification":
+        return {
+            "type": "classification_bar",
+            "predicted_class": output.get("predicted_class"),
+            "predicted_classes": output.get("predicted_classes", []),
+            "top_k": output.get("top_k", []),
+            "score_type": output.get("score_type"),
+        }
+    if task == "segmentation":
+        return {
+            "type": "segmentation_mask",
+            "mask_shape": output.get("mask_shape"),
+            "mask_values": output.get("mask_values", []),
+            "class_labels": output.get("class_labels", {}),
+            "has_rle": "mask_runs" in output or "mask_row_major_rle" in output,
+        }
+    if task == "detection":
+        return {
+            "type": "detection_boxes",
+            "count": output.get("count", 0),
+            "labels": output.get("labels", []),
+            "boxes_xyxy": output.get("boxes_xyxy", []),
+            "scores": output.get("scores", []),
+        }
+    return {"type": "unknown"}
+
+
+def _comparison_summary(row: dict) -> dict:
+    output = row.get("output") if isinstance(row.get("output"), dict) else {}
+    task = row.get("task")
+    if row.get("status") != "completed":
+        return {"error_code": row.get("error_code")}
+    if task == "classification":
+        return {
+            "predicted_class": output.get("predicted_class"),
+            "predicted_classes": output.get("predicted_classes", []),
+            "top_k": output.get("top_k", []),
+        }
+    if task == "segmentation":
+        return {
+            "mask_shape": output.get("mask_shape"),
+            "mask_values": output.get("mask_values", []),
+            "class_labels": output.get("class_labels", {}),
+        }
+    if task == "detection":
+        return {
+            "count": output.get("count", 0),
+            "labels": output.get("labels", []),
+        }
+    return {}
+
+
+@app.get("/api/v1/inference/compare")
+def compare_predictions(
+    prediction_ids: str = Query(..., min_length=1, description="Comma-separated prediction IDs (2 to 10)"),
+    user: dict = Depends(authorize),
+):
+    raw_ids = [item.strip() for item in prediction_ids.split(",") if item.strip()]
+    unique_ids = list(dict.fromkeys(raw_ids))
+    if not 2 <= len(unique_ids) <= 10:
+        raise HTTPException(422, "Provide between 2 and 10 unique prediction_ids to compare")
+    admin = "inference_admin" in user["roles"]
+    records = []
+    for pid in unique_ids:
+        row = audit.get_prediction(pid, user["subject"], admin=admin)
+        if row is None:
+            raise HTTPException(404, f"Prediction {pid} not found")
+        records.append(row)
+    tasks = {row.get("task") for row in records}
+    same_task = len(tasks) == 1 and None not in tasks
+    latencies = [float(row["latency_ms"]) for row in records]
+    agreement = None
+    if same_task and next(iter(tasks)) == "classification" and all(r.get("status") == "completed" for r in records):
+        predicted = [(r.get("output") or {}).get("predicted_class") for r in records]
+        agreement = {"all_agree": len(set(predicted)) == 1, "predicted_classes": predicted}
+    return {
+        "count": len(records),
+        "same_task": same_task,
+        "models": [
+            {
+                "prediction_id": row["prediction_id"],
+                "model_id": row["model_id"],
+                "model_version": row["model_version"],
+                "artifact_sha256": row["artifact_sha256"],
+                "task": row["task"],
+                "status": row["status"],
+                "latency_ms": row["latency_ms"],
+                "created_at": row["created_at"],
+            }
+            for row in records
+        ],
+        "comparison": [
+            {
+                "prediction_id": row["prediction_id"],
+                "model_id": row["model_id"],
+                "model_version": row["model_version"],
+                "status": row["status"],
+                "latency_ms": row["latency_ms"],
+                "summary": _comparison_summary(row),
+            }
+            for row in records
+        ],
+        "latency_ms": {
+            "min": min(latencies),
+            "max": max(latencies),
+            "spread": round(max(latencies) - min(latencies), 4),
+        },
+        "agreement": agreement,
+        "disclaimer": "Model-generated research prediction; not a diagnosis.",
+    }
+
+
+@app.get("/api/v1/predictions/{prediction_id}/artifacts")
+def prediction_artifacts(prediction_id: str, user: dict = Depends(authorize)):
+    row = audit.get_prediction(prediction_id, user["subject"], admin="inference_admin" in user["roles"])
+    if row is None:
+        raise HTTPException(404, "Prediction not found")
+    payload = {
+        "schema_version": "1.0",
+        "prediction_id": row["prediction_id"],
+        "model_id": row["model_id"],
+        "model_version": row["model_version"],
+        "artifact_sha256": row["artifact_sha256"],
+        "task": row["task"],
+        "status": row["status"],
+        "created_at": row["created_at"],
+        "latency_ms": row["latency_ms"],
+        "output": row["output"],
+        "lineage": row["lineage"],
+        "visualization": _visualization_metadata(row.get("task"), row.get("output")),
+        "disclaimer": "Model-generated research prediction; not a diagnosis.",
+    }
+    safe_name = "".join(ch for ch in prediction_id if ch.isalnum() or ch in {"-", "_"}) or "prediction"
+    return JSONResponse(
+        content=payload,
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}-artifacts.json"'},
+    )
+
+
 @app.get("/api/v1/inference/history/{prediction_id}")
 @app.get("/api/v1/predictions/{prediction_id}")
 def prediction_history(prediction_id: str, user: dict = Depends(authorize)):
@@ -489,9 +644,13 @@ def unload_model(selection: ModelSelection, _user: dict = Depends(authorize_admi
     return {"status": "unloaded", **selection.model_dump()}
 
 
-async def _catalogue() -> list[dict]:
+async def _catalogue(*, include_experimental: bool = False) -> list[dict]:
     try:
+        if include_experimental:
+            return await catalogue(include_experimental=True)
         return await catalogue()
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
     except RegistryUnavailable as exc:
         raise HTTPException(503, str(exc)) from exc
 
@@ -510,7 +669,7 @@ async def list_approved_models(
     return {
         "items": [
             row
-            for row in await _catalogue()
+            for row in await _catalogue(include_experimental=False)
             if all(value is None or row.get(field) == value for field, value in filters.items())
         ]
     }
@@ -523,6 +682,7 @@ async def list_models(
     architecture: str | None = None,
     version: str | None = None,
     approved: bool | None = None,
+    include_experimental: bool = False,
     _user: dict = Depends(authorize),
 ):
     filters = dict(
@@ -531,7 +691,7 @@ async def list_models(
     return {
         "items": [
             row
-            for row in await _catalogue()
+            for row in await _catalogue(include_experimental=include_experimental)
             if all(value is None or row.get(field) == value for field, value in filters.items())
         ]
     }
@@ -615,6 +775,10 @@ async def system_status(_user: dict = Depends(authorize_admin)):
             catalogue_status = "unavailable"
     else:
         catalogue_status = "not configured"
+    try:
+        experimental_mode = experimental_mode_enabled()
+    except RegistryUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
     artifact_store, s3_status = await run_in_threadpool(artifact_store_status)
     return {
         "backend": "reachable",
@@ -625,6 +789,7 @@ async def system_status(_user: dict = Depends(authorize_admin)):
         "artifact_store": artifact_store,
         "s3": s3_status,
         "environment": os.getenv("INFERENCE_ENVIRONMENT", "development"),
+        "experimental_mode": experimental_mode,
         "deployment_version": app.version,
         "loaded_models": models.active(),
         "model_cache": models.stats(),

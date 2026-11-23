@@ -296,3 +296,179 @@ def test_health_and_readiness_checks_mlops_and_db(tmp_path, monkeypatch):
 
         monkeypatch.setattr(application, "_database_reachable", lambda: False)
         assert client.get("/ready").status_code == 503
+
+
+def test_liveness_prediction_artifacts_and_compare(tmp_path, monkeypatch):
+    from medical_imaging_inference import audit
+
+    monkeypatch.setenv("INFERENCE_DATABASE_PATH", str(tmp_path / "artifacts_compare.sqlite3"))
+    user = {"subject": "alice", "roles": ["inference_user"]}
+    monkeypatch.setitem(application.app.dependency_overrides, authorize, lambda: user)
+
+    audit.record_prediction(
+        {
+            "prediction_id": "pred-v1",
+            "model_id": "lesion",
+            "model_version": "1.0.0",
+            "artifact_sha256": "1" * 64,
+            "status": "completed",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "latency_ms": 12.5,
+            "task": "classification",
+            "device": "cpu",
+            "output": {
+                "predicted_class": "malignant",
+                "predicted_classes": ["malignant"],
+                "top_k": [{"label": "malignant", "score": 0.91}, {"label": "benign", "score": 0.09}],
+                "score_type": "uncalibrated_softmax",
+            },
+            "lineage": {"experiment_id": "exp-1", "dataset_release_id": "rel-1"},
+        },
+        b"img-bytes",
+        "alice",
+    )
+    audit.record_prediction(
+        {
+            "prediction_id": "pred-v2",
+            "model_id": "lesion",
+            "model_version": "2.0.0",
+            "artifact_sha256": "2" * 64,
+            "status": "completed",
+            "created_at": "2026-01-01T00:01:00+00:00",
+            "latency_ms": 18.0,
+            "task": "classification",
+            "device": "cpu",
+            "output": {
+                "predicted_class": "malignant",
+                "predicted_classes": ["malignant"],
+                "top_k": [{"label": "malignant", "score": 0.95}, {"label": "benign", "score": 0.05}],
+                "score_type": "uncalibrated_softmax",
+            },
+            "lineage": {"experiment_id": "exp-2", "dataset_release_id": "rel-1"},
+        },
+        b"img-bytes",
+        "alice",
+    )
+    audit.record_prediction(
+        {
+            "prediction_id": "pred-other",
+            "model_id": "lesion",
+            "model_version": "1.0.0",
+            "artifact_sha256": "3" * 64,
+            "status": "completed",
+            "created_at": "2026-01-01T00:02:00+00:00",
+            "latency_ms": 10.0,
+            "task": "classification",
+            "device": "cpu",
+            "output": {"predicted_class": "benign"},
+            "lineage": {},
+        },
+        b"other",
+        "bob",
+    )
+
+    with TestClient(application.app) as client:
+        live = client.get("/live")
+        assert live.status_code == 200
+        assert live.json()["status"] == "alive"
+
+        art = client.get("/api/v1/predictions/pred-v1/artifacts")
+        assert art.status_code == 200
+        assert "attachment;" in art.headers["content-disposition"]
+        body = art.json()
+        assert body["prediction_id"] == "pred-v1"
+        assert body["visualization"]["type"] == "classification_bar"
+        assert body["visualization"]["predicted_class"] == "malignant"
+        assert body["lineage"]["experiment_id"] == "exp-1"
+        assert "not a diagnosis" in body["disclaimer"]
+
+        # Requester scoping enforced on artifacts and compare
+        assert client.get("/api/v1/predictions/pred-other/artifacts").status_code == 404
+        assert client.get("/api/v1/inference/compare?prediction_ids=pred-v1,pred-other").status_code == 404
+
+        # Fewer than 2 IDs rejected
+        assert client.get("/api/v1/inference/compare?prediction_ids=pred-v1").status_code == 422
+
+        cmp_res = client.get("/api/v1/inference/compare?prediction_ids=pred-v1,pred-v2")
+        assert cmp_res.status_code == 200
+        cmp_body = cmp_res.json()
+        assert cmp_body["count"] == 2
+        assert cmp_body["same_task"] is True
+        assert cmp_body["agreement"] == {"all_agree": True, "predicted_classes": ["malignant", "malignant"]}
+        assert cmp_body["latency_ms"] == {"min": 12.5, "max": 18.0, "spread": 5.5}
+
+
+def test_experimental_mode_flag_and_production_guard(monkeypatch):
+    real_client = httpx.AsyncClient
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    monkeypatch.delenv("INFERENCE_LOCAL_CATALOGUE", raising=False)
+    monkeypatch.setenv("MLOPS_API_URL", "https://governance.example")
+    monkeypatch.setenv("MLOPS_SERVICE_TOKEN", "svc-token")
+    monkeypatch.setenv("INFERENCE_ENVIRONMENT", "development")
+
+    def respond(request):
+        assert request.url.path == "/api/v1/inference/models"
+        items = [
+            {
+                "model_id": "lesion",
+                "version": "1.0.0",
+                "state": "approved",
+                "artifact_digest": "a" * 64,
+                "metadata": {"task": "classification"},
+            },
+            {
+                "model_id": "rejected-m",
+                "version": "0.1.0",
+                "state": "rejected",
+                "artifact_digest": "b" * 64,
+            },
+        ]
+        if request.url.params.get("include_experimental") == "true":
+            items.append(
+                {
+                    "model_id": "exp-candidate",
+                    "version": "0.2.0-rc1",
+                    "state": "candidate_submitted",
+                    "experimental": True,
+                    "artifact_digest": "c" * 64,
+                    "metadata": {"task": "classification"},
+                }
+            )
+        return httpx.Response(200, json={"items": items})
+
+    transport = httpx.MockTransport(respond)
+    monkeypatch.setattr(
+        registry.httpx, "AsyncClient", lambda **kwargs: real_client(transport=transport, **kwargs)
+    )
+    monkeypatch.setitem(
+        application.app.dependency_overrides,
+        authorize,
+        lambda: {"subject": "dev", "roles": ["inference_user", "inference_admin"]},
+    )
+
+    with TestClient(application.app) as client:
+        # Without flag, include_experimental=true is forbidden (403)
+        monkeypatch.delenv("INFERENCE_ALLOW_EXPERIMENTAL", raising=False)
+        assert client.get("/api/v1/models?include_experimental=true").status_code == 403
+
+        # With INFERENCE_ALLOW_EXPERIMENTAL=1 in development:
+        monkeypatch.setenv("INFERENCE_ALLOW_EXPERIMENTAL", "1")
+        # Default /api/v1/models still returns approved-only
+        default_items = client.get("/api/v1/models").json()["items"]
+        assert [(m["model_id"], m["approved"]) for m in default_items] == [("lesion", True)]
+
+        # Explicit include_experimental=true returns clearly labelled experimental entry (never rejected)
+        exp_items = client.get("/api/v1/models?include_experimental=true").json()["items"]
+        assert [(m["model_id"], m["approved"], m["experimental"]) for m in exp_items] == [
+            ("lesion", True, False),
+            ("exp-candidate", False, True),
+        ]
+
+        # /api/v1/models/approved NEVER includes experimental entries
+        approved_items = client.get("/api/v1/models/approved").json()["items"]
+        assert [m["model_id"] for m in approved_items] == ["lesion"]
+
+        # Production must reject INFERENCE_ALLOW_EXPERIMENTAL=1 (503 fail-closed)
+        monkeypatch.setenv("INFERENCE_ENVIRONMENT", "production")
+        assert client.get("/api/v1/models?include_experimental=true").status_code == 503
+        assert client.get("/api/v1/system/status").status_code == 503

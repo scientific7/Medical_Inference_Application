@@ -155,18 +155,32 @@ def _project_approved(candidate: dict, record: dict) -> dict:
     return result
 
 
-async def governance_candidates() -> list[dict]:
+def experimental_mode_enabled() -> bool:
+    raw = os.getenv("INFERENCE_ALLOW_EXPERIMENTAL", "").strip().lower()
+    if raw not in {"1", "true", "yes"}:
+        return False
+    if os.getenv("INFERENCE_ENVIRONMENT", "development").strip().lower() == "production":
+        raise RegistryUnavailable("INFERENCE_ALLOW_EXPERIMENTAL is forbidden in production")
+    return True
+
+
+async def governance_candidates(*, include_experimental: bool = False) -> list[dict]:
     base = os.getenv("MLOPS_API_URL", "http://127.0.0.1:8081").rstrip("/")
     token = os.getenv("MLOPS_SERVICE_TOKEN")
     if not token:
         raise RegistryUnavailable("Governance service identity is not configured")
+    if include_experimental and not experimental_mode_enabled():
+        raise PermissionError("Experimental model listing requires INFERENCE_ALLOW_EXPERIMENTAL=1 in development")
     candidates = {}
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             for offset in range(0, 10000, 100):
+                params: dict[str, int | str] = {"limit": 100, "offset": offset}
+                if include_experimental:
+                    params["include_experimental"] = "true"
                 response = await client.get(
                     f"{base}/api/v1/inference/models",
-                    params={"limit": 100, "offset": offset},
+                    params=params,
                     headers={"Authorization": f"Bearer {token}"},
                 )
                 response.raise_for_status()
@@ -178,12 +192,22 @@ async def governance_candidates() -> list[dict]:
                     if not isinstance(row, dict):
                         continue
                     state = row.get("state", row.get("status"))
-                    if state is not None and state != "approved":
+                    is_experimental = bool(row.get("experimental")) or (
+                        include_experimental and state not in {"approved", "rejected", "deprecated", "withdrawn"}
+                    )
+                    if state in {"rejected", "deprecated", "withdrawn"}:
+                        continue
+                    if state != "approved" and not (include_experimental and is_experimental):
                         continue
                     selection = ModelSelection(model_id=str(row["model_id"]), version=str(row["version"]))
-                    candidates[(selection.model_id, selection.version)] = _project_approved(
-                        selection.model_dump(), row
-                    )
+                    projected = _project_approved(selection.model_dump(), row)
+                    if state != "approved":
+                        projected["approved"] = False
+                        projected["experimental"] = True
+                        projected["state"] = state or "experimental"
+                    else:
+                        projected["experimental"] = False
+                    candidates[(selection.model_id, selection.version)] = projected
                 if len(rows) < 100:
                     return list(candidates.values())
         raise ValueError("Governance catalogue exceeds discovery limit")
@@ -191,11 +215,13 @@ async def governance_candidates() -> list[dict]:
         raise RegistryUnavailable("Governance catalogue is unavailable") from exc
 
 
-async def mlops_approved_models() -> list[dict]:
-    return await governance_candidates()
+async def mlops_approved_models(*, include_experimental: bool = False) -> list[dict]:
+    return await governance_candidates(include_experimental=include_experimental)
 
 
-async def catalogue() -> list[dict]:
+async def catalogue(*, include_experimental: bool = False) -> list[dict]:
+    if include_experimental and not experimental_mode_enabled():
+        raise PermissionError("Experimental model listing requires INFERENCE_ALLOW_EXPERIMENTAL=1 in development")
     base = os.getenv("MLFLOW_TRACKING_URI")
     local = os.getenv("INFERENCE_LOCAL_CATALOGUE")
     if base:
@@ -207,7 +233,7 @@ async def catalogue() -> list[dict]:
         except (OSError, ValueError, TypeError) as exc:
             raise RegistryUnavailable("Local development catalogue is unavailable") from exc
     elif os.getenv("MLOPS_SERVICE_TOKEN"):
-        return await governance_candidates()
+        return await governance_candidates(include_experimental=include_experimental)
     else:
         raise RegistryUnavailable("Model catalogue is not configured")
 
