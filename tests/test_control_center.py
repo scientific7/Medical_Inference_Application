@@ -76,7 +76,7 @@ def test_real_torchscript_classification_segmentation_and_detection_workflow(cli
     assert cls_data["result"]["output"]["predicted_class"] in {"benign", "malignant", "indeterminate"}
     assert len(cls_data["result"]["output"]["top_k"]) == 3
 
-    # 4. REAL PyTorch TorchScript Segmentation
+    # 4. REAL PyTorch TorchScript Segmentation + PNG Mask Export
     seg_job = client.post(
         "/api/v1/inference",
         json={"model_id": "lesion-unet-segmenter", "model_version": "v1.0.0", "upload_id": upload_id},
@@ -87,8 +87,11 @@ def test_real_torchscript_classification_segmentation_and_detection_workflow(cli
     assert seg_data["status"] == "completed"
     assert seg_data["result"]["output"]["mask_shape"] == [256, 256]
     assert len(seg_data["result"]["output"]["mask_runs"]) >= 1
+    mask_png = client.get(f"/api/v1/inference/{seg_data['job_id']}/export?format=png", headers=VIEWER)
+    assert mask_png.status_code == 200
+    assert mask_png.content.startswith(b"\x89PNG")
 
-    # 5. REAL PyTorch TorchScript Detection
+    # 5. REAL PyTorch TorchScript Detection + Structured JSON Export
     det_job = client.post(
         "/api/v1/inference",
         json={"model_id": "thoracic-nodule-detector", "model_version": "v1.0.0", "upload_id": upload_id},
@@ -98,6 +101,21 @@ def test_real_torchscript_classification_segmentation_and_detection_workflow(cli
     det_data = det_job.json()
     assert det_data["status"] == "completed"
     assert len(det_data["result"]["output"]["boxes_xyxy"]) >= 1
+    det_json = client.get(f"/api/v1/inference/{det_data['job_id']}/export?format=json", headers=VIEWER)
+    assert det_json.status_code == 200
+    assert len(det_json.json()["output"]["boxes_xyxy"]) >= 1
+
+    # 5b. Batch Image Upload (2 PNG files)
+    batch_up = client.post(
+        "/api/v1/uploads/batch",
+        files=[
+            ("files", ("a.png", prev.content, "image/png")),
+            ("files", ("b.png", prev.content, "image/png")),
+        ],
+        headers=RESEARCHER,
+    )
+    assert batch_up.status_code == 201
+    assert batch_up.json()["total"] == 2
 
     # 6. Reports (PDF, HTML, JSON) include AI-prediction disclaimer
     job_id = cls_data["job_id"]

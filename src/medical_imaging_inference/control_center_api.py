@@ -318,6 +318,29 @@ async def upload_image(
         raise HTTPException(422, str(exc)) from exc
 
 
+@router.post("/api/v1/uploads/batch", status_code=201)
+async def upload_image_batch(
+    files: list[UploadFile] = File(...),
+    modality: str = Form("Dermoscopy / Radiography"),
+    user: dict = Depends(authorize_researcher),
+):
+    """Validate and store a batch of up to 8 medical images with PHI redaction."""
+    if not files or len(files) > 8:
+        raise HTTPException(422, "Batch upload requires between 1 and 8 image files")
+    stored = []
+    for f in files:
+        content = await f.read(20 * 1024 * 1024 + 1)
+        try:
+            stored.append(
+                cdb.validate_and_store_upload(
+                    content, f.filename or "upload.png", f.content_type or "image/png", user["subject"], modality=modality
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(422, f"{f.filename}: {exc}") from exc
+    return {"items": stored, "total": len(stored)}
+
+
 @router.post("/api/v1/uploads/sample", status_code=201)
 def create_sample_medical_upload(
     modality: str = Query("Dermoscopy"),
@@ -364,6 +387,30 @@ def get_upload_preview(upload_id: str, _user: dict = Depends(authorize)):
 # 3. Inference Execution, Async Job Management, Cancel & Retry
 # ---------------------------------------------------------------------------
 
+def _check_governance_suspension(model_id: str, version: str) -> None:
+    """Block inference if Layer 3 MLOps Governance marks the model version suspended or retired."""
+    mlops_url = cdb.get_settings()["mlops_api_url"].rstrip("/")
+    try:
+        with httpx.Client(timeout=1.5) as client:
+            r = client.get(f"{mlops_url}/api/v1/inference/eligibility/{model_id}/{version}")
+            if r.status_code == 200:
+                data = r.json()
+                if data.get("suspended"):
+                    raise HTTPException(
+                        403,
+                        f"Model {model_id}:{version} is suspended by MLOps Governance: {data.get('suspension_reason') or 'suspended'}",
+                    )
+                if data.get("registered") and not data.get("eligible_for_inference", True):
+                    raise HTTPException(
+                        403,
+                        f"Model {model_id}:{version} is not eligible for inference (lifecycle_state={data.get('lifecycle_state')})",
+                    )
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+
+
 @router.post("/api/v1/inference", status_code=201)
 def submit_inference_job(
     body: InferenceJobRequest,
@@ -372,6 +419,8 @@ def submit_inference_job(
 ):
     if body.compute_profile == "aws-gpu-g5-xlarge":
         raise HTTPException(409, "GPU compute profile aws-gpu-g5-xlarge is blocked: AWS account 2003****8406 has 0 vCPUs EC2 G/VT quota.")
+
+    _check_governance_suspension(body.model_id, body.model_version)
 
     try:
         model_rec = _resolve_approved_model(body.model_id, body.model_version)
@@ -419,6 +468,53 @@ def get_inference_job(job_id: str, _user: dict = Depends(authorize)):
         return cdb.get_job(job_id)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
+
+
+@router.get("/api/v1/inference/{job_id}/export")
+def export_inference_output(
+    job_id: str,
+    format: str = Query("json", pattern="^(json|png)$"),
+    _user: dict = Depends(authorize),
+):
+    """Export structured prediction JSON (classification/detection/segmentation) or PNG segmentation mask."""
+    try:
+        job = cdb.get_job(job_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    out = (job.get("result") or {}).get("output") or {}
+    if format == "json":
+        payload = {
+            "job_id": job["job_id"],
+            "model_id": job["model_id"],
+            "model_version": job["model_version"],
+            "task_type": job["task_type"],
+            "output": out,
+        }
+        return Response(
+            content=json.dumps(payload, indent=2).encode("utf-8"),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{job_id}_prediction.json"'},
+        )
+    # PNG mask export for segmentation
+    if job["task_type"] != "segmentation" or not out.get("mask_runs") or not out.get("mask_shape"):
+        raise HTTPException(422, "PNG export is supported only for completed segmentation jobs with mask_runs")
+    import numpy as np
+
+    h, w = int(out["mask_shape"][0]), int(out["mask_shape"][1])
+    flat = np.zeros(h * w, dtype=np.uint8)
+    idx = 0
+    for val, length in out["mask_runs"]:
+        end = min(h * w, idx + int(length))
+        flat[idx:end] = 255 if int(val) > 0 else 0
+        idx = end
+    mask_img = Image.fromarray(flat.reshape((h, w)))
+    buf = io.BytesIO()
+    mask_img.save(buf, format="PNG")
+    return Response(
+        content=buf.getvalue(),
+        media_type="image/png",
+        headers={"Content-Disposition": f'attachment; filename="{job_id}_mask.png"'},
+    )
 
 
 @router.post("/api/v1/inference/{job_id}/cancel")
