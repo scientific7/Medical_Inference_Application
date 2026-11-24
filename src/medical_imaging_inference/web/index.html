@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Medical Imaging Inference Center — Layer 4</title>
+<style>
+  :root {
+    --bg: #0b1120; --sidebar: #0f172a; --card: #131c31; --card-2: #19243d;
+    --border: #24324d; --text: #e2e8f0; --muted: #94a3b8;
+    --accent: #38bdf8; --accent-2: #6366f1; --emerald: #10b981; --amber: #f59e0b; --rose: #f43f5e;
+  }
+  body.light {
+    --bg: #f1f5f9; --sidebar: #0f172a; --card: #ffffff; --card-2: #f8fafc;
+    --border: #cbd5e1; --text: #0f172a; --muted: #475569;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif; background: var(--bg); color: var(--text); display: flex; min-height: 100vh; font-size: 13px; }
+  aside { width: 244px; background: var(--sidebar); color: #e2e8f0; border-right: 1px solid #1e293b; display: flex; flex-direction: column; position: fixed; top: 0; bottom: 0; left: 0; overflow-y: auto; z-index: 20; }
+  .brand { padding: 15px 15px 12px; border-bottom: 1px solid #1e293b; display: flex; align-items: center; gap: 10px; }
+  .brand-logo { width: 34px; height: 34px; border-radius: 9px; background: linear-gradient(135deg, #0ea5e9, #6366f1); display: flex; align-items: center; justify-content: center; font-weight: 800; color: #fff; font-size: 13px; flex-shrink: 0; }
+  .brand h1 { font-size: 13px; font-weight: 700; line-height: 1.2; }
+  .brand small { color: #94a3b8; font-size: 11px; }
+  nav { padding: 8px; flex: 1; }
+  .nav-group { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; padding: 9px 10px 4px; font-weight: 700; }
+  .nav-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 7px; cursor: pointer; color: #cbd5e1; font-size: 12.5px; margin-bottom: 2px; border: none; background: transparent; width: 100%; text-align: left; }
+  .nav-item:hover { background: #1e293b; color: #fff; }
+  .nav-item.active { background: #0284c7; color: #fff; font-weight: 600; }
+  .sidebar-footer { padding: 10px 14px; border-top: 1px solid #1e293b; font-size: 11px; color: #94a3b8; }
+  main { margin-left: 244px; flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  header { background: var(--card); border-bottom: 1px solid var(--border); padding: 11px 22px; display: flex; align-items: center; justify-content: space-between; gap: 10px; position: sticky; top: 0; z-index: 15; flex-wrap: wrap; }
+  .header-title { display: flex; align-items: center; gap: 10px; }
+  .header-title h2 { font-size: 16px; font-weight: 700; }
+  .header-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .pill { padding: 4px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 600; border: 1px solid var(--border); background: var(--card-2); color: var(--text); }
+  .pill.ok { border-color: rgba(16,185,129,0.4); color: var(--emerald); background: rgba(16,185,129,0.1); }
+  .pill.warn { border-color: rgba(245,158,11,0.4); color: var(--amber); background: rgba(245,158,11,0.1); }
+  .pill.err { border-color: rgba(244,63,94,0.4); color: var(--rose); background: rgba(244,63,94,0.1); }
+  .pill.info { border-color: rgba(56,189,248,0.4); color: var(--accent); background: rgba(56,189,248,0.1); }
+  .content { padding: 18px 22px 42px; max-width: 1480px; width: 100%; }
+  .grid-4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); gap: 12px; margin-bottom: 14px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-bottom: 14px; }
+  .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 14px; margin-bottom: 14px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 15px; margin-bottom: 14px; }
+  .card h3 { font-size: 14px; font-weight: 700; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .kpi { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 13px 15px; }
+  .kpi-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; }
+  .kpi-val { font-size: 23px; font-weight: 800; margin-top: 4px; }
+  .kpi-sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+  input, select, textarea { background: var(--card-2); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 7px 10px; font-size: 12.5px; width: 100%; font-family: inherit; }
+  label { display: block; font-size: 11.5px; color: var(--muted); margin-bottom: 4px; font-weight: 600; }
+  .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin-bottom: 12px; }
+  button, .btn { background: #0284c7; color: #fff; border: none; border-radius: 7px; padding: 7px 13px; font-size: 12.5px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+  button:hover, .btn:hover { filter: brightness(1.1); }
+  .btn-sm { padding: 4px 9px; font-size: 11.5px; }
+  .btn-ghost { background: var(--card-2); color: var(--text); border: 1px solid var(--border); }
+  .btn-ok { background: var(--emerald); }
+  .btn-warn { background: var(--amber); color: #0f172a; }
+  .btn-err { background: var(--rose); }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 700; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; word-break: break-all; }
+  .bar-row { margin-bottom: 8px; }
+  .bar-head { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px; }
+  .bar-track { height: 8px; background: var(--card-2); border-radius: 99px; overflow: hidden; }
+  .bar-fill { height: 100%; background: linear-gradient(90deg, #0ea5e9, #6366f1); border-radius: 99px; }
+  .notice { padding: 10px 13px; border-radius: 8px; border: 1px solid rgba(56,189,248,0.35); background: rgba(56,189,248,0.08); margin-bottom: 12px; font-size: 12px; }
+  .disclaimer { padding: 9px 12px; border-radius: 8px; border: 1px solid rgba(245,158,11,0.4); background: rgba(245,158,11,0.08); margin-bottom: 12px; font-size: 12px; }
+  .viewer-wrap { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start; }
+  canvas.med-canvas { background: #000; border: 1px solid var(--border); border-radius: 8px; max-width: 100%; cursor: grab; }
+  pre { background: var(--card-2); border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow: auto; max-height: 280px; font-size: 11.5px; }
+  .toast { position: fixed; right: 20px; bottom: 20px; z-index: 99; padding: 10px 16px; border-radius: 8px; font-weight: 600; font-size: 12.5px; background: #1e293b; color: #fff; border: 1px solid var(--accent); box-shadow: 0 10px 25px rgba(0,0,0,0.4); display: none; }
+</style>
+</head>
+<body>
+<aside>
+  <div class="brand">
+    <div class="brand-logo">MI</div>
+    <div>
+      <h1>Inference Center</h1>
+      <small>Layer 4 · PyTorch / TF</small>
+    </div>
+  </div>
+  <nav>
+    <div class="nav-group">Overview</div>
+    <button class="nav-item active" data-view="dashboard">A. Dashboard</button>
+    <button class="nav-item" data-view="catalogue">B. Model Catalogue</button>
+    <div class="nav-group">Inference Execution</div>
+    <button class="nav-item" data-view="workspace">C. Inference Workspace</button>
+    <button class="nav-item" data-view="input">D. Image Input</button>
+    <button class="nav-item" data-view="classification">E. Classification</button>
+    <button class="nav-item" data-view="segmentation">F. Segmentation</button>
+    <button class="nav-item" data-view="detection">G. Detection</button>
+    <div class="nav-group">Jobs &amp; Visualization</div>
+    <button class="nav-item" data-view="jobs">H. Inference Jobs</button>
+    <button class="nav-item" data-view="history">I. Inference History</button>
+    <button class="nav-item" data-view="viewer">J. Results &amp; Viewer</button>
+    <button class="nav-item" data-view="reports">K. Reports</button>
+    <div class="nav-group">Compute &amp; Ops</div>
+    <button class="nav-item" data-view="analytics">L. Performance Analytics</button>
+    <button class="nav-item" data-view="compute">M. AWS Compute</button>
+    <button class="nav-item" data-view="monitoring">N. Monitoring &amp; Alerts</button>
+    <button class="nav-item" data-view="integrations">O. Integration Center</button>
+    <button class="nav-item" data-view="admin">P. Administration</button>
+    <button class="nav-item" data-view="settings">Q. Settings</button>
+  </nav>
+  <div class="sidebar-footer">Real TorchScript Runtime<br/>Approved Models Only · PHI Safe</div>
+</aside>
+
+<main>
+  <header>
+    <div class="header-title">
+      <h2 id="view-title">A. Inference Dashboard</h2>
+      <span class="pill info">Real TorchScript Engine</span>
+    </div>
+    <div class="header-controls">
+      <span class="pill" id="aws-badge">AWS: Checking…</span>
+      <select id="actor-select" style="width:auto;">
+        <option value="clinician-1|inference_user,inference_viewer" selected>User: clinician-1 (Researcher)</option>
+        <option value="inference-admin-1|inference_admin,inference_user,inference_viewer">User: inference-admin-1 (Admin)</option>
+        <option value="viewer-1|inference_viewer">User: viewer-1 (Viewer)</option>
+      </select>
+      <button class="btn-ghost btn-sm" id="theme-toggle">Light / Dark</button>
+      <button class="btn-sm" id="refresh-btn">↻ Refresh</button>
+    </div>
+  </header>
+  <div class="content" id="app-content">Loading Medical Imaging Inference Center…</div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const STATE = { view: 'dashboard', activeJobId: null };
+
+function getHeaders() {
+  const [u, r] = document.getElementById('actor-select').value.split('|');
+  return { 'X-Dev-User': u, 'X-Dev-Roles': r };
+}
+function toast(msg, isErr = false) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.style.borderColor = isErr ? '#f43f5e' : '#10b981';
+  el.style.display = 'block';
+  clearTimeout(window._t);
+  window._t = setTimeout(() => { el.style.display = 'none'; }, 4000);
+}
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+function badge(st) {
+  const s = String(st || '').toLowerCase();
+  let c = 'pill ';
+  if (['completed','approved','connected','healthy','resolved','true','ok'].includes(s)) c += 'ok';
+  else if (['queued','running','pending','warning','mock','mock_fallback','acknowledged'].includes(s)) c += 'warn';
+  else if (['failed','error','offline','critical','open','cancelled','false'].includes(s)) c += 'err';
+  else c += 'info';
+  return `<span class="${c}">${esc(st)}</span>`;
+}
+async function api(path, opts = {}) {
+  const headers = { ...getHeaders(), ...(opts.headers || {}) };
+  if (opts.body && !(opts.body instanceof FormData) && typeof opts.body !== 'string') {
+    headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(opts.body);
+  }
+  const res = await fetch(path, { ...opts, headers });
+  const txt = await res.text();
+  let data = null;
+  try { data = txt ? JSON.parse(txt) : null; } catch { data = txt; }
+  if (!res.ok) {
+    const msg = (data && data.detail) ? data.detail : `HTTP ${res.status}`;
+    toast(msg, true);
+    throw new Error(msg);
+  }
+  return data;
+}
+
+async function refreshAws() {
+  try {
+    const d = await api('/api/v1/settings');
+    const a = d.aws || {};
+    const el = document.getElementById('aws-badge');
+    el.textContent = `AWS (${a.region || 'ap-south-1'}): ${a.status || 'mock'} · ${a.account_masked || '2003****8406'}`;
+    el.className = 'pill ' + (a.status === 'connected' ? 'ok' : 'warn');
+  } catch {}
+}
+
+const TITLES = {
+  dashboard: 'A. Inference Dashboard', catalogue: 'B. Approved Model Catalogue',
+  workspace: 'C. Inference Workspace', input: 'D. Image Input & Validation',
+  classification: 'E. Classification Module', segmentation: 'F. Segmentation Module',
+  detection: 'G. Detection Module', jobs: 'H. Inference Job Management',
+  history: 'I. Inference History', viewer: 'J. Medical Image Viewer & Results',
+  reports: 'K. Inference Reports (PDF / HTML / JSON)', analytics: 'L. Performance Analytics',
+  compute: 'M. AWS Compute Management', monitoring: 'N. Monitoring & Alerts',
+  integrations: 'O. Integration Center', admin: 'P. Administration & RBAC', settings: 'Q. Settings',
+};
+
+document.querySelectorAll('.nav-item').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    STATE.view = btn.dataset.view;
+    document.getElementById('view-title').textContent = TITLES[STATE.view] || STATE.view;
+    render();
+  });
+});
+document.getElementById('theme-toggle').addEventListener('click', () => document.body.classList.toggle('light'));
+document.getElementById('refresh-btn').addEventListener('click', () => { refreshAws(); render(); });
+document.getElementById('actor-select').addEventListener('change', () => { toast('Switched active user role'); render(); });
+
+async function render() {
+  const root = document.getElementById('app-content');
+  root.innerHTML = '<div class="card">Loading…</div>';
+  try { await VIEWS[STATE.view](root); }
+  catch (err) { root.innerHTML = `<div class="card"><h3>Error</h3><p>${esc(err.message)}</p></div>`; }
+}
+
+async function renderTaskWorkspace(root, filterTask = null) {
+  const [cat, ups, jobs] = await Promise.all([
+    api('/api/v1/catalogue' + (filterTask ? `?task=${filterTask}` : '')),
+    api('/api/v1/uploads'),
+    api('/api/v1/inference' + (filterTask ? `?task_type=${filterTask}` : '')),
+  ]);
+  const models = cat.items || [];
+  const uploads = ups.items || [];
+  const latestJob = (jobs.items || []).find(j => j.status === 'completed') || null;
+  if (latestJob && !STATE.activeJobId) STATE.activeJobId = latestJob.job_id;
+
+  root.innerHTML = `
+    <div class="disclaimer"><strong>Clinical Safety Notice:</strong> All predictions are AI-generated model outputs from real PyTorch TorchScript / TensorFlow models and require independent clinician verification.</div>
+    <div class="card">
+      <h3>Run Real ${filterTask ? filterTask.toUpperCase() : 'Medical Imaging'} Inference</h3>
+      <div class="form-grid">
+        <div>
+          <label>1. Approved Model Version</label>
+          <select id="inf-model">
+            ${models.map(m => `<option value="${esc(m.model_id)}|${esc(m.version)}">${esc(m.model_id)} (${esc(m.version)}) · ${esc(m.task)} · ${esc(m.architecture)}</option>`).join('') || '<option value="">No approved models available</option>'}
+          </select>
+        </div>
+        <div>
+          <label>2. Validated Medical Image Input</label>
+          <select id="inf-upload">
+            ${uploads.map(u => `<option value="${esc(u.upload_id)}">${esc(u.filename)} (${u.width || '?'}x${u.height || '?'} · ${esc(u.format_family)})</option>`).join('') || '<option value="">Upload or load a sample image →</option>'}
+          </select>
+        </div>
+        <div>
+          <label>3. Compute Profile</label>
+          <select id="inf-profile">
+            <option value="local-cpu">Local PyTorch TorchScript (CPU)</option>
+            <option value="aws-batch-cpu">AWS Batch CPU (m7i.xlarge)</option>
+            <option value="aws-gpu-g5-xlarge">AWS Batch GPU (g5.xlarge — Quota Guarded)</option>
+          </select>
+        </div>
+        <div>
+          <label>4. Confidence Threshold (optional)</label>
+          <input id="inf-thresh" type="number" step="0.05" min="0" max="1" placeholder="Model default" />
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <button id="run-inf-btn">▶ Run Real Inference</button>
+        <button class="btn-ghost" id="gen-sample-btn">+ Load Anonymized Medical Test Image</button>
+        <label class="btn btn-ghost" style="margin:0;cursor:pointer;">↑ Upload Image<input type="file" id="quick-file" accept=".png,.jpg,.jpeg,.tif,.tiff,.dcm,.nii,.nii.gz,.nrrd" style="display:none;"/></label>
+      </div>
+    </div>
+    <div id="live-result-wrap">${latestJob ? '<div class="card">Loading viewer…</div>' : '<div class="card"><p style="color:var(--muted)">Run an inference job above to inspect real predictions, overlays, and reports.</p></div>'}</div>`;
+
+  if (latestJob) await renderResultPanel(document.getElementById('live-result-wrap'), latestJob);
+
+  document.getElementById('gen-sample-btn').addEventListener('click', async () => {
+    await api('/api/v1/uploads/sample?modality=Dermoscopy', { method: 'POST' });
+    toast('Anonymized medical test image loaded & validated');
+    render();
+  });
+  document.getElementById('quick-file').addEventListener('change', async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const fd = new FormData(); fd.append('file', f); fd.append('modality', 'Dermoscopy / Radiography');
+    await api('/api/v1/uploads', { method: 'POST', body: fd });
+    toast(`Uploaded & validated ${f.name}`);
+    render();
+  });
+  document.getElementById('run-inf-btn').addEventListener('click', async () => {
+    const mVal = document.getElementById('inf-model').value;
+    let uVal = document.getElementById('inf-upload').value;
+    if (!mVal) { toast('No approved model selected', true); return; }
+    if (!uVal) {
+      const sample = await api('/api/v1/uploads/sample?modality=Dermoscopy', { method: 'POST' });
+      uVal = sample.upload_id;
+    }
+    const [model_id, model_version] = mVal.split('|');
+    const threshRaw = document.getElementById('inf-thresh').value;
+    const body = {
+      model_id, model_version, upload_id: uVal,
+      compute_profile: document.getElementById('inf-profile').value,
+      threshold: threshRaw ? parseFloat(threshRaw) : null,
+    };
+    const job = await api('/api/v1/inference', { method: 'POST', body });
+    STATE.activeJobId = job.job_id;
+    toast(`Real ${job.task_type} inference ${job.status} in ${job.runtime_ms} ms`);
+    await renderResultPanel(document.getElementById('live-result-wrap'), job);
+  });
+}
+
+async function renderResultPanel(container, job) {
+  const out = (job.result && job.result.output) || {};
+  const task = job.task_type;
+  let summaryHtml = '';
+  if (task === 'classification') {
+    const topK = out.top_k || [];
+    summaryHtml = `
+      <div style="margin-bottom:10px;"><strong>Predicted Class:</strong> ${badge(out.predicted_class || 'none')} <span class="mono">(${esc(out.score_type || '')})</span></div>
+      ${topK.map(t => `<div class="bar-row"><div class="bar-head"><span>${esc(t.label)}</span><strong>${(t.score * 100).toFixed(1)}%</strong></div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(t.score * 100)}%"></div></div></div>`).join('')}`;
+  } else if (task === 'segmentation') {
+    summaryHtml = `<p><strong>Mask Shape:</strong> ${esc(JSON.stringify(out.mask_shape))} · <strong>Classes:</strong> ${esc(JSON.stringify(out.class_labels || {}))}</p><p style="color:var(--muted);margin-top:4px;">Adjust Overlay Opacity below to inspect segmented lesion pixels over the original image.</p>`;
+  } else if (task === 'detection') {
+    const boxes = out.boxes_xyxy || [];
+    const labels = out.labels || [];
+    const scores = out.scores || [];
+    summaryHtml = `
+      <p style="margin-bottom:8px;"><strong>Detections Found:</strong> ${boxes.length}</p>
+      <table><thead><tr><th>#</th><th>Label</th><th>Confidence</th><th>BBox (xyxy px)</th></tr></thead><tbody>
+      ${boxes.map((b, i) => `<tr><td>${i+1}</td><td>${badge(labels[i] || 'object')}</td><td>${((scores[i] || 0)*100).toFixed(1)}%</td><td class="mono">${b.map(v => Math.round(v)).join(', ')}</td></tr>`).join('')}
+      </tbody></table>`;
+  }
+
+  container.innerHTML = `
+    <div class="card">
+      <h3>Result &amp; Interactive Medical Image Viewer — ${esc(job.model_id)}:${esc(job.model_version)} (${esc(job.runtime_ms)} ms · ${esc(job.device || 'cpu')})
+        <div style="display:flex;gap:6px;">
+          <a class="btn btn-sm" href="/api/v1/reports/${encodeURIComponent(job.job_id)}?format=html" target="_blank">HTML Report</a>
+          <a class="btn btn-ghost btn-sm" href="/api/v1/reports/${encodeURIComponent(job.job_id)}?format=pdf" target="_blank">PDF Report</a>
+          <a class="btn btn-ghost btn-sm" href="/api/v1/reports/${encodeURIComponent(job.job_id)}?format=json" target="_blank">JSON</a>
+        </div>
+      </h3>
+      <div class="grid-2">
+        <div>
+          <div class="form-grid" style="margin-bottom:8px;">
+            <div><label>Zoom: <span id="lbl-zoom">1.0x</span></label><input id="ctrl-zoom" type="range" min="0.5" max="2.5" step="0.1" value="1" /></div>
+            <div><label>Window/Level (Contrast): <span id="lbl-wl">100%</span></label><input id="ctrl-wl" type="range" min="50" max="200" step="5" value="100" /></div>
+            <div><label>Overlay Opacity: <span id="lbl-op">55%</span></label><input id="ctrl-op" type="range" min="0" max="100" step="5" value="55" /></div>
+          </div>
+          <div class="viewer-wrap">
+            <canvas id="med-canvas" class="med-canvas" width="320" height="320"></canvas>
+          </div>
+        </div>
+        <div>
+          ${summaryHtml}
+          <h4 style="margin:12px 0 6px;font-size:12px;color:var(--muted);">Provenance &amp; Raw Output</h4>
+          <pre>${esc(JSON.stringify({ job_id: job.job_id, device: job.device, runtime_ms: job.runtime_ms, artifact_sha256: job.artifact_sha256, output: out }, null, 2))}</pre>
+        </div>
+      </div>
+    </div>`;
+
+  // Draw real uploaded image + real segmentation mask / detection boxes on Canvas
+  if (job.upload_id) {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    const resp = await fetch(`/api/v1/uploads/${encodeURIComponent(job.upload_id)}/preview`, { headers: getHeaders() });
+    if (resp.ok) {
+      const blob = await resp.blob();
+      img.src = URL.createObjectURL(blob);
+      img.onload = () => {
+        const canvas = document.getElementById('med-canvas');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const redraw = () => {
+          const zoom = parseFloat(document.getElementById('ctrl-zoom').value);
+          const wl = parseFloat(document.getElementById('ctrl-wl').value);
+          const op = parseFloat(document.getElementById('ctrl-op').value) / 100;
+          document.getElementById('lbl-zoom').textContent = zoom.toFixed(1) + 'x';
+          document.getElementById('lbl-wl').textContent = wl + '%';
+          document.getElementById('lbl-op').textContent = Math.round(op * 100) + '%';
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.save();
+          ctx.filter = `contrast(${wl}%)`;
+          const dw = canvas.width * zoom, dh = canvas.height * zoom;
+          const ox = (canvas.width - dw) / 2, oy = (canvas.height - dh) / 2;
+          ctx.drawImage(img, ox, oy, dw, dh);
+          ctx.filter = 'none';
+
+          // Segmentation mask RLE overlay
+          if (task === 'segmentation' && out.mask_runs && out.mask_shape && op > 0) {
+            const [mh, mw] = out.mask_shape;
+            const off = document.createElement('canvas');
+            off.width = mw; off.height = mh;
+            const octx = off.getContext('2d');
+            const idata = octx.createImageData(mw, mh);
+            let idx = 0;
+            for (const [val, len] of out.mask_runs) {
+              for (let k = 0; k < len; k++) {
+                if (val > 0) {
+                  idata.data[idx * 4] = 16;
+                  idata.data[idx * 4 + 1] = 185;
+                  idata.data[idx * 4 + 2] = 129;
+                  idata.data[idx * 4 + 3] = Math.round(op * 210);
+                }
+                idx++;
+              }
+            }
+            octx.putImageData(idata, 0, 0);
+            ctx.drawImage(off, ox, oy, dw, dh);
+          }
+
+          // Detection bounding box overlay
+          if (task === 'detection' && out.boxes_xyxy && op > 0) {
+            const sx = dw / img.naturalWidth, sy = dh / img.naturalHeight;
+            ctx.globalAlpha = Math.max(0.25, op);
+            ctx.lineWidth = 2.5;
+            out.boxes_xyxy.forEach((b, i) => {
+              const x1 = ox + b[0] * sx, y1 = oy + b[1] * sy, bw = (b[2] - b[0]) * sx, bh = (b[3] - b[1]) * sy;
+              ctx.strokeStyle = i === 0 ? '#f43f5e' : '#38bdf8';
+              ctx.strokeRect(x1, y1, bw, bh);
+              const lbl = `${(out.labels && out.labels[i]) || 'obj'} ${(((out.scores && out.scores[i]) || 0)*100).toFixed(0)}%`;
+              ctx.fillStyle = i === 0 ? '#f43f5e' : '#38bdf8';
+              ctx.fillRect(x1, Math.max(0, y1 - 16), ctx.measureText(lbl).width + 8, 16);
+              ctx.fillStyle = '#fff';
+              ctx.font = 'bold 11px sans-serif';
+              ctx.fillText(lbl, x1 + 4, Math.max(12, y1 - 4));
+            });
+          }
+          ctx.restore();
+        };
+        ['ctrl-zoom', 'ctrl-wl', 'ctrl-op'].forEach(id => document.getElementById(id).addEventListener('input', redraw));
+        redraw();
+      };
+    }
+  }
+}
+
+const VIEWS = {
+  async dashboard(root) {
+    const d = await api('/api/v1/dashboard');
+    const k = d.kpis;
+    const byTask = (d.analytics && d.analytics.by_task) || {};
+    const maxT = Math.max(1, ...Object.values(byTask));
+    root.innerHTML = `
+      <div class="grid-4">
+        <div class="kpi"><div class="kpi-label">Available Approved Models</div><div class="kpi-val">${k.available_versions}</div><div class="kpi-sub">Cls: ${k.classification_models} · Seg: ${k.segmentation_models} · Det: ${k.detection_models}</div></div>
+        <div class="kpi"><div class="kpi-label">Total Inference Jobs</div><div class="kpi-val">${k.total_jobs}</div><div class="kpi-sub">Completed: ${k.completed_jobs} · Failed: ${k.failed_jobs}</div></div>
+        <div class="kpi"><div class="kpi-label">Mean / P95 Latency</div><div class="kpi-val" style="color:var(--accent)">${k.mean_latency_ms !== null ? k.mean_latency_ms + ' ms' : '—'}</div><div class="kpi-sub">P95: ${k.p95_latency_ms !== null ? k.p95_latency_ms + ' ms' : '—'} · Loaded: ${k.loaded_models}</div></div>
+        <div class="kpi"><div class="kpi-label">Compute &amp; Alerts</div><div class="kpi-val">${badge(k.aws_status)}</div><div class="kpi-sub">Open Alerts: ${k.open_alerts} · Queued: ${k.queued_jobs}</div></div>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Task Type Distribution</h3>
+          ${Object.entries(byTask).map(([t, c]) => `<div class="bar-row"><div class="bar-head"><span>${esc(t)}</span><strong>${c}</strong></div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(c/maxT*100)}%"></div></div></div>`).join('')}
+        </div>
+        <div class="card">
+          <h3>Quick Actions</h3>
+          <p style="color:var(--muted);margin-bottom:12px;">Execute real PyTorch TorchScript inference across Classification, Segmentation, and Detection on verified medical images.</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button onclick="document.querySelector('[data-view=workspace]').click()">▶ Open Inference Workspace</button>
+            <button class="btn-ghost" onclick="document.querySelector('[data-view=catalogue]').click()">Browse Model Catalogue</button>
+            <button class="btn-ghost" onclick="document.querySelector('[data-view=compute]').click()">AWS Compute Status</button>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Recent Inference Jobs (${(d.recent_jobs || []).length})</h3>
+        <table>
+          <thead><tr><th>Job ID</th><th>Model</th><th>Task</th><th>Status</th><th>Device</th><th>Latency</th><th>Report</th></tr></thead>
+          <tbody>
+            ${(d.recent_jobs || []).map(j => `<tr><td class="mono">${esc(j.job_id)}</td><td>${esc(j.model_id)}:${esc(j.model_version)}</td><td>${badge(j.task_type)}</td><td>${badge(j.status)}</td><td>${esc(j.device || 'cpu')}</td><td>${j.runtime_ms ?? '—'} ms</td><td><a class="btn btn-ghost btn-sm" href="/api/v1/reports/${encodeURIComponent(j.job_id)}?format=pdf" target="_blank">PDF</a></td></tr>`).join('') || '<tr><td colspan="7" style="color:var(--muted)">No inference jobs run yet.</td></tr>'}
+          </tbody>
+        </table>
+      </div>`;
+  },
+
+  async catalogue(root) {
+    const data = await api('/api/v1/catalogue');
+    const items = data.items || [];
+    root.innerHTML = `
+      <div class="notice"><strong>Governance-Verified Only:</strong> Models originate from Layer 3 Governance / verified SHA-256 packages. Unapproved training checkpoints are never served.</div>
+      <div class="card">
+        <h3>Approved Model Catalogue (${items.length})</h3>
+        <table>
+          <thead><tr><th>Model ID &amp; Version</th><th>Task</th><th>Architecture</th><th>Framework</th><th>Modality</th><th>Status</th><th>Artifact SHA-256</th></tr></thead>
+          <tbody>
+            ${items.map(m => `<tr><td><strong>${esc(m.model_id)}</strong> <span class="mono">${esc(m.version)}</span></td><td>${badge(m.task)}</td><td>${esc(m.architecture)}</td><td>${esc(m.framework)}</td><td>${esc(m.modality || 'Medical')}</td><td>${badge('approved')}</td><td class="mono">${esc((m.artifact_digest || '').slice(0, 16))}…</td></tr>`).join('') || '<tr><td colspan="7" style="color:var(--muted)">No approved models discovered.</td></tr>'}
+          </tbody>
+        </table>
+      </div>`;
+  },
+
+  async workspace(root) { await renderTaskWorkspace(root, null); },
+  async classification(root) { await renderTaskWorkspace(root, 'classification'); },
+  async segmentation(root) { await renderTaskWorkspace(root, 'segmentation'); },
+  async detection(root) { await renderTaskWorkspace(root, 'detection'); },
+
+  async input(root) {
+    const ups = await api('/api/v1/uploads');
+    root.innerHTML = `
+      <div class="card">
+        <h3>Upload &amp; Validate Medical Images (PNG, JPEG, TIFF, DICOM, NIfTI · PHI Protected)</h3>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+          <label class="btn" style="margin:0;cursor:pointer;">↑ Upload Medical File<input type="file" id="inp-file" style="display:none;"/></label>
+          <button class="btn-ghost" id="inp-sample">+ Generate Anonymized Test Phantom</button>
+        </div>
+        <table>
+          <thead><tr><th>Upload ID</th><th>Filename</th><th>Format</th><th>Dimensions</th><th>Size</th><th>PHI Guard</th><th>SHA-256</th></tr></thead>
+          <tbody>
+            ${(ups.items || []).map(u => `<tr><td class="mono">${esc(u.upload_id)}</td><td>${esc(u.filename)}</td><td>${badge(u.format_family)}</td><td>${u.width || '—'}×${u.height || '—'}</td><td>${Math.round(u.size_bytes/1024)} KB</td><td>${badge('redacted')}</td><td class="mono">${esc(u.sha256.slice(0, 16))}…</td></tr>`).join('') || '<tr><td colspan="7" style="color:var(--muted)">No images uploaded yet.</td></tr>'}
+          </tbody>
+        </table>
+      </div>`;
+    document.getElementById('inp-sample').addEventListener('click', async () => { await api('/api/v1/uploads/sample', { method: 'POST' }); toast('Sample uploaded'); render(); });
+    document.getElementById('inp-file').addEventListener('change', async (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      const fd = new FormData(); fd.append('file', f);
+      await api('/api/v1/uploads', { method: 'POST', body: fd });
+      toast('Validated & stored ' + f.name); render();
+    });
+  },
+
+  async jobs(root) {
+    const data = await api('/api/v1/inference');
+    const items = data.items || [];
+    root.innerHTML = `
+      <div class="card">
+        <h3>Inference Jobs (${items.length})</h3>
+        <table>
+          <thead><tr><th>Job ID</th><th>Model</th><th>Task</th><th>Profile</th><th>Status</th><th>Latency</th><th>Actions</th></tr></thead>
+          <tbody>
+            ${items.map(j => `<tr><td class="mono">${esc(j.job_id)}</td><td>${esc(j.model_id)}:${esc(j.model_version)}</td><td>${badge(j.task_type)}</td><td>${esc(j.compute_profile)}</td><td>${badge(j.status)}</td><td>${j.runtime_ms ?? '—'} ms</td><td style="display:flex;gap:6px;"><button class="btn-sm" onclick="openJobViewer('${esc(j.job_id)}')">Inspect</button><button class="btn-ghost btn-sm" onclick="retryJob('${esc(j.job_id)}')">Retry</button></td></tr>`).join('') || '<tr><td colspan="7" style="color:var(--muted)">No inference jobs yet.</td></tr>'}
+          </tbody>
+        </table>
+      </div>`;
+    window.openJobViewer = (jid) => { STATE.activeJobId = jid; document.querySelector('[data-view=viewer]').click(); };
+    window.retryJob = async (jid) => { await api(`/api/v1/inference/${encodeURIComponent(jid)}/retry`, { method: 'POST' }); toast('Job retried'); render(); };
+  },
+
+  async history(root) { await VIEWS.jobs(root); },
+
+  async viewer(root) {
+    const data = await api('/api/v1/inference');
+    const completed = (data.items || []).filter(j => j.status === 'completed');
+    if (!completed.length) {
+      root.innerHTML = '<div class="card"><h3>Medical Image Viewer</h3><p style="color:var(--muted)">Run an inference job in C. Inference Workspace first to inspect overlays in the interactive viewer.</p></div>';
+      return;
+    }
+    const target = completed.find(j => j.job_id === STATE.activeJobId) || completed[0];
+    root.innerHTML = '<div id="v-panel"></div>';
+    await renderResultPanel(document.getElementById('v-panel'), target);
+  },
+
+  async reports(root) {
+    const data = await api('/api/v1/reports');
+    const items = data.items || [];
+    root.innerHTML = `
+      <div class="card">
+        <h3>Inference Reports (${items.length})</h3>
+        <table>
+          <thead><tr><th>Job ID</th><th>Model</th><th>Task</th><th>Runtime</th><th>Completed</th><th>Download</th></tr></thead>
+          <tbody>
+            ${items.map(r => `<tr><td class="mono">${esc(r.job_id)}</td><td>${esc(r.model_id)}:${esc(r.model_version)}</td><td>${badge(r.task_type)}</td><td>${r.runtime_ms ?? '—'} ms</td><td class="mono">${esc(r.completed_at)}</td><td style="display:flex;gap:6px;"><a class="btn btn-sm" href="/api/v1/reports/${encodeURIComponent(r.job_id)}?format=html" target="_blank">HTML</a><a class="btn btn-ghost btn-sm" href="/api/v1/reports/${encodeURIComponent(r.job_id)}?format=pdf" target="_blank">PDF</a><a class="btn btn-ghost btn-sm" href="/api/v1/reports/${encodeURIComponent(r.job_id)}?format=json" target="_blank">JSON</a></td></tr>`).join('') || '<tr><td colspan="6" style="color:var(--muted)">No completed inference reports yet.</td></tr>'}
+          </tbody>
+        </table>
+      </div>`;
+  },
+
+  async analytics(root) {
+    const a = await api('/api/v1/analytics');
+    root.innerHTML = `
+      <div class="notice">${esc(a.measured_vs_estimated)}</div>
+      <div class="card">
+        <h3>Per-Model Performance Analytics</h3>
+        <table>
+          <thead><tr><th>Model</th><th>Total Jobs</th><th>Completed</th><th>Failed</th><th>Mean Latency</th></tr></thead>
+          <tbody>
+            ${(a.by_model || []).map(m => `<tr><td class="mono">${esc(m.model)}</td><td>${m.jobs}</td><td>${m.completed}</td><td>${m.failed}</td><td>${m.mean_latency_ms ?? '—'} ms</td></tr>`).join('') || '<tr><td colspan="5" style="color:var(--muted)">Run inference jobs to populate measured analytics.</td></tr>'}
+          </tbody>
+        </table>
+      </div>`;
+  },
+
+  async compute(root) {
+    const c = await api('/api/v1/compute');
+    const a = c.aws || {};
+    root.innerHTML = `
+      <div class="card">
+        <h3>AWS Compute &amp; Execution Profiles (${esc(a.region)} · ${esc(a.account_masked)})</h3>
+        <div class="disclaimer"><strong>GPU Quota Guardrail:</strong> ${esc(a.gpu_quota_note)}</div>
+        <table>
+          <thead><tr><th>Profile</th><th>Provider</th><th>Device</th><th>Available</th><th>Est. Cost/Job</th><th>Notes</th></tr></thead>
+          <tbody>
+            ${(c.profiles || []).map(p => `<tr><td><strong>${esc(p.name)}</strong><div class="mono">${esc(p.profile_id)}</div></td><td>${esc(p.provider)}</td><td>${esc(p.device)}</td><td>${badge(p.available ? 'ok' : 'blocked')}</td><td>$${p.estimated_cost_per_job_usd.toFixed(2)}</td><td>${esc(p.blocked_reason || p.job_definition || 'Ready')}</td></tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="card"><h3>Live AWS Metadata &amp; Model Cache</h3><pre>${esc(JSON.stringify({ aws: a, cache: c.cache, active_models: c.active_models }, null, 2))}</pre></div>`;
+  },
+
+  async monitoring(root) {
+    const m = await api('/api/v1/monitoring');
+    root.innerHTML = `
+      <div class="card">
+        <h3>Operational Alerts (${(m.alerts || []).length})</h3>
+        <table>
+          <thead><tr><th>Alert ID</th><th>Severity</th><th>Title</th><th>Status</th><th>Action</th></tr></thead>
+          <tbody>
+            ${(m.alerts || []).map(al => `<tr><td class="mono">${esc(al.alert_id)}</td><td>${badge(al.severity)}</td><td>${esc(al.title)}</td><td>${badge(al.status)}</td><td>${al.status !== 'resolved' ? `<button class="btn-ok btn-sm" onclick="resolveAlert('${esc(al.alert_id)}')">Resolve</button>` : badge('closed')}</td></tr>`).join('') || '<tr><td colspan="5" style="color:var(--muted)">No operational alerts raised.</td></tr>'}
+          </tbody>
+        </table>
+      </div>`;
+    window.resolveAlert = async (aid) => { await api(`/api/v1/alerts/${encodeURIComponent(aid)}`, { method: 'PATCH', body: { status: 'resolved', resolution: 'Verified and cleared' } }); toast('Alert resolved'); render(); };
+  },
+
+  async integrations(root) {
+    const d = await api('/api/v1/integrations');
+    root.innerHTML = `
+      <div class="card">
+        <h3>Cross-Repository Ecosystem Connectivity</h3>
+        <table>
+          <thead><tr><th>Layer / Service</th><th>Repository</th><th>URL</th><th>Status</th><th>Checked At</th></tr></thead>
+          <tbody>
+            ${(d.services || []).map(s => `<tr><td><strong>${esc(s.name)}</strong></td><td class="mono">${esc(s.repo)}</td><td class="mono">${esc(s.url)}</td><td>${badge(s.probe.status)}</td><td class="mono">${esc(s.probe.checked_at)}</td></tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  },
+
+  async admin(root) {
+    const u = await api('/api/v1/admin/users');
+    root.innerHTML = `
+      <div class="card">
+        <h3>Users &amp; Inference RBAC Permissions (${(u.items || []).length})</h3>
+        <table>
+          <thead><tr><th>User ID</th><th>Display Name</th><th>Email</th><th>Roles</th><th>Status</th></tr></thead>
+          <tbody>
+            ${(u.items || []).map(r => `<tr><td class="mono">${esc(r.user_id)}</td><td>${esc(r.display_name)}</td><td>${esc(r.email)}</td><td>${(r.roles || []).map(badge).join(' ')}</td><td>${badge(r.active ? 'ok' : 'inactive')}</td></tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  },
+
+  async settings(root) {
+    const d = await api('/api/v1/settings');
+    const s = d.settings || {};
+    root.innerHTML = `
+      <div class="card">
+        <h3>Inference Application Settings (Secrets Masked)</h3>
+        <form id="set-form">
+          <div class="form-grid">
+            <div><label>MLOps Governance URL (Layer 3)</label><input name="mlops_api_url" value="${esc(s.mlops_api_url || '')}" /></div>
+            <div><label>Dataset Pipeline URL (Layer 1)</label><input name="dataset_pipeline_url" value="${esc(s.dataset_pipeline_url || '')}" /></div>
+            <div><label>Model Engineering URL (Layer 2)</label><input name="model_engineering_url" value="${esc(s.model_engineering_url || '')}" /></div>
+            <div><label>Main Platform URL (Layer 5)</label><input name="platform_api_url" value="${esc(s.platform_api_url || '')}" /></div>
+            <div><label>AWS Mode</label><select name="aws_mode"><option value="auto" ${s.aws_mode==='auto'?'selected':''}>auto</option><option value="mock" ${s.aws_mode==='mock'?'selected':''}>mock</option></select></div>
+          </div>
+          <button type="submit">Save Settings (Admin)</button>
+        </form>
+      </div>`;
+    document.getElementById('set-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await api('/api/v1/settings', { method: 'PUT', body: Object.fromEntries(new FormData(e.target).entries()) });
+      toast('Settings saved'); refreshAws();
+    });
+  },
+};
+
+refreshAws();
+render();
+</script>
+</body>
+</html>

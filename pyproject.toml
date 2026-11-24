@@ -20,6 +20,9 @@ frontend = ["streamlit==1.49.1"]
 pytorch = ["torch==2.5.1", "torchvision==0.20.1"]
 tensorflow = ["tensorflow==2.18.0"]
 
+[project.scripts]
+medical-imaging-inference = "medical_imaging_inference.app:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

@@ -802,3 +802,16 @@ async def system_status(_user: dict = Depends(authorize_admin)):
         "inference_concurrency": INFERENCE_CONCURRENCY,
         "inference_timeout_seconds": _inference_timeout(),
     }
+
+
+from .control_center_api import router as control_center_router  # noqa: E402
+
+app.include_router(control_center_router)
+
+
+def main() -> None:
+    import uvicorn
+
+    host = os.getenv("INFERENCE_HOST", "127.0.0.1")
+    port = int(os.getenv("INFERENCE_PORT", "8002"))
+    uvicorn.run("medical_imaging_inference.app:app", host=host, port=port, reload=False)

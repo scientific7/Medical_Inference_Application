@@ -56,6 +56,7 @@ def test_torch_export_runs_on_requested_device(device, tmp_path, monkeypatch):
     manifest = {
         "framework": "pytorch",
         "task": "classification",
+        "class_mapping": {"negative": 0, "positive": 1},
         "preprocessing": {"image_size": [2, 2], "color": "RGB", "scale": "[0,1]"},
     }
     if (device == "cuda" and not torch.cuda.is_available()) or (
