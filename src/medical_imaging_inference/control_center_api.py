@@ -108,6 +108,8 @@ def _discover_approved_models() -> list[dict[str, Any]]:
             if r.status_code == 200:
                 for row in r.json().get("items", []):
                     key = (row["model_id"], row["version"])
+                    card_lower = str(row.get("model_card") or "").lower()
+                    inferred_mod = "Dermoscopy (Skin Lesion)" if ("isic" in row["model_id"].lower() or "dermoscopy" in card_lower) else "Medical Imaging"
                     found[key] = {
                         "model_id": row["model_id"],
                         "version": row["version"],
@@ -116,11 +118,13 @@ def _discover_approved_models() -> list[dict[str, Any]]:
                         "task": row.get("task", "classification"),
                         "architecture": row.get("architecture", "unknown"),
                         "framework": row.get("framework", "pytorch"),
-                        "modality": row.get("modality", "Medical Imaging"),
+                        "modality": row.get("modality") or inferred_mod,
                         "artifact_path": row.get("artifact_uri", ""),
                         "artifact_digest": row.get("artifact_sha256", ""),
+                        "manifest_digest": row.get("model_manifest_sha256", ""),
                         "preprocessing": row.get("preprocessing") or {},
                         "class_mapping": row.get("class_mapping") or {},
+                        "evaluation_summary": row.get("evaluation_summary") or {},
                         "model_card": row.get("model_card") or "",
                         "limitations": row.get("limitations") or [],
                         "source": "mlops_governance_api",

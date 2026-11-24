@@ -37,6 +37,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("INFERENCE_ENVIRONMENT", "development")
     monkeypatch.setenv("INFERENCE_AWS_MODE", "mock")
     monkeypatch.setenv("INFERENCE_DEVICE", "cpu")
+    monkeypatch.setenv("MLOPS_API_URL", "http://127.0.0.1:1")
     return TestClient(app)
 
 
